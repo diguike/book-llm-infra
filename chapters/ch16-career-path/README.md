@@ -316,4 +316,5 @@ Week 4: ch12-15，部署一套带可观测的服务 + 做一个 RAG 系统
 ---
 
 > 本章来自《LLM Infra 从入门到实践》开源版 · 作者「递归客」  
-> 在线阅读完整书系：[inferloop.dev](https://inferloop.dev)
+> 在线阅读完整书系：[inferloop.dev](https://inferloop.dev)  
+> 源码仓库：[github.com/diguike/book-llm-infra](https://github.com/diguike/book-llm-infra)

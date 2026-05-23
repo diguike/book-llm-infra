@@ -366,4 +366,5 @@ A800/H800 和 A100/H100 的计算能力完全一样，只是卡间互联（NVLin
 ---
 
 > 本章来自《LLM Infra 从入门到实践》开源版 · 作者「递归客」  
-> 在线阅读完整书系：[inferloop.dev](https://inferloop.dev)
+> 在线阅读完整书系：[inferloop.dev](https://inferloop.dev)  
+> 源码仓库：[github.com/diguike/book-llm-infra](https://github.com/diguike/book-llm-infra)
