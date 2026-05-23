@@ -1,0 +1,17 @@
+# Ch11 分布式训练依赖
+# 建议使用 Python 3.10+ 和 CUDA 12.1+
+
+torch>=2.1.0
+transformers>=4.40.0
+datasets>=2.18.0
+accelerate>=0.28.0
+
+# DeepSpeed
+deepspeed>=0.14.0
+
+# FSDP（PyTorch 原生，torch>=2.1 已内置）
+# 无需额外安装
+
+# 可选：训练监控
+# tensorboard>=2.15.0
+# wandb>=0.16.0

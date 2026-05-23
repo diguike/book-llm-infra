@@ -1,0 +1,57 @@
+{
+    "//": "DeepSpeed ZeRO Stage 2 配置",
+    "//": "适合大多数微调场景：分片梯度和优化器状态，通信开销小",
+    "//": "使用方法：在 HuggingFace TrainingArguments 中指定 deepspeed='03_deepspeed_config.json'",
+
+    "bf16": {
+        "enabled": true
+    },
+
+    "zero_optimization": {
+        "stage": 2,
+
+        "allgather_partitions": true,
+        "allgather_bucket_size": 5e8,
+
+        "overlap_comm": true,
+
+        "reduce_scatter": true,
+        "reduce_bucket_size": 5e8,
+
+        "contiguous_gradients": true
+    },
+
+    "gradient_accumulation_steps": "auto",
+    "gradient_clipping": 1.0,
+
+    "train_batch_size": "auto",
+    "train_micro_batch_size_per_gpu": "auto",
+
+    "wall_clock_breakdown": false,
+
+    "//": "===== ZeRO Stage 3 配置（取消注释替换上面的 zero_optimization）=====",
+    "//": "适合模型太大放不下一张卡的场景",
+    "//zero_optimization_stage3": {
+        "stage": 3,
+        "allgather_partitions": true,
+        "allgather_bucket_size": 5e8,
+        "overlap_comm": true,
+        "reduce_scatter": true,
+        "reduce_bucket_size": 5e8,
+        "contiguous_gradients": true,
+        "stage3_max_live_parameters": 1e9,
+        "stage3_max_reuse_distance": 1e9,
+        "stage3_prefetch_bucket_size": 5e8,
+        "stage3_param_persistence_threshold": 1e6,
+        "stage3_gather_16bit_weights_on_model_save": true,
+        "//": "CPU Offload（可选，进一步降低显存，但训练变慢）",
+        "offload_param": {
+            "device": "cpu",
+            "pin_memory": true
+        },
+        "offload_optimizer": {
+            "device": "cpu",
+            "pin_memory": true
+        }
+    }
+}

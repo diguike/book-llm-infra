@@ -1,0 +1,13 @@
+# 第 4 章 依赖
+torch>=2.1.0
+transformers>=4.40.0
+safetensors>=0.4.0
+accelerate>=0.27.0
+huggingface_hub>=0.20.0
+psutil>=5.9.0
+fastapi>=0.110.0
+uvicorn>=0.27.0
+openai>=1.12.0
+
+# 可选：GGUF 格式支持
+# llama-cpp-python>=0.2.50

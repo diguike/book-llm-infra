@@ -1,0 +1,17 @@
+# Ch09 微调依赖
+# 建议使用 Python 3.10+ 和 CUDA 12.1+
+
+torch>=2.1.0
+transformers>=4.40.0
+peft>=0.10.0
+datasets>=2.18.0
+accelerate>=0.28.0
+bitsandbytes>=0.43.0       # QLoRA 量化支持
+trl>=0.8.0                 # 可选，SFTTrainer 等高级封装
+scipy                      # bitsandbytes 依赖
+
+# 推理和部署（可选）
+# vllm>=0.4.0
+
+# LLaMA-Factory（可选，独立安装）
+# pip install llamafactory

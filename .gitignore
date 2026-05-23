@@ -1,0 +1,169 @@
+# ============================================================
+# inferloop 书籍仓库通用 .gitignore 模板
+# 用法：开源一本书时把这个文件拷到该书根目录命名为 .gitignore
+#
+# 原则：只开源【书的正文 MD 文件】和【示例代码】，其余一律不开源
+# ============================================================
+
+# === 创作过程产物（不开源） ===
+
+# AI 协作上下文
+CLAUDE.md
+.claude/
+
+# 交接快照与会话记录
+HANDOFF.md
+*.handoff.md
+session-*.md
+
+# 调研与目录迭代
+research/
+toc/
+
+# 审稿、打磨、验证报告
+review/
+review-*.md
+review-*.yaml
+polish-*.md
+polish-report.md
+verify-report.md
+verify-report.yaml
+smoke-*.md
+
+# 书籍内部元数据（含 stage、评分、内部备注）
+book.meta.yaml
+
+# 团队/内部规范文档
+team-*.md
+internal-*.md
+
+# 出版社/合作方专属文件
+publisher/
+manuscript-*.docx
+*-publisher.*
+*-watermarked.docx
+*-watermarked.pdf
+
+# 封面原始 prompt（生成产物 cover.png 可以保留）
+cover-prompt*.md
+cover-*.prompt
+
+# === 飞书集成 / 部署相关代码（一律不开源） ===
+# 这些通常是作者把书里的东西接到自己生产环境的工具/配置，不是给读者看的示例代码
+
+# 集成项目（feishu-bot / 飞书 bitable MCP / 告警 / dashboard 等）
+integrations/
+
+# 部署相关
+deploy/
+deployment/
+infra/
+ops/
+.do/
+terraform/
+k8s/
+kubernetes/
+
+# 部署脚本与配置
+deploy_*.sh
+deploy-*.sh
+deploy_*.py
+deploy-*.py
+Dockerfile.deploy
+docker-compose.deploy*.yml
+docker-compose.deploy*.yaml
+
+# 飞书机器人 / 飞书集成（任何位置出现都不开源）
+**/feishu-bot/
+**/feishu-bitable*/
+**/feishu-*-bot/
+**/lark-bot/
+
+# === 飞书同步 / 发布 / 上传工具链（一律不开源） ===
+
+# 整个 scripts/ 目录默认不开源
+scripts/
+
+# Root-level 同步/上传/发布脚本（部分书放在根目录）
+sync_*.py
+sync-*.py
+sync_*.sh
+sync-*.sh
+sync_*.ts
+sync-*.ts
+sync_*.mjs
+sync-*.mjs
+sync_*.js
+sync-*.js
+upload_*.py
+upload-*.py
+upload_*.sh
+upload-*.sh
+upload_*.mjs
+upload-*.mjs
+upload-feishu*
+update_feishu*.py
+update_feishu*.sh
+publish-wiki*.sh
+publish_wiki*.sh
+publish-wiki*.ts
+publish-wiki*.mjs
+
+# 工具链产生的日志和状态文件
+*.log
+*_state.json
+.wiki-state.json
+feishu-setup/
+
+# === 通用开发产物 ===
+
+# Node / Bun
+node_modules/
+**/node_modules/
+bun.lockb
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+.ipynb_checkpoints/
+
+# Env vars
+.env
+.env.local
+.env.*.local
+.env.production
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Examples 运行时数据
+**/data/
+examples/*/cache/
+examples/*/.cache/
+examples/*/*.db
+examples/*/*.sqlite*
+*.db-journal
+
+# 模型权重
+*.bin
+*.safetensors
+*.gguf
+*.pt
+*.pth
+
+# 大文件归档
+*.tgz
+*.tar.gz

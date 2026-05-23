@@ -1,0 +1,160 @@
+# vLLM GPU Deployment for Kubernetes
+# 部署 Qwen2.5-7B-Instruct 到带 A10 GPU 的节点
+#
+# 使用前提：
+# 1. 已安装 NVIDIA device plugin: kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.16.1/deployments/static/nvidia-device-plugin.yml
+# 2. GPU 节点已打 label: kubectl label node <node> gpu-type=a10
+# 3. 模型权重已下载到节点的 /data/models 目录（或使用 initContainer 下载）
+#
+# 部署: kubectl apply -f 02_k8s_deployment.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-qwen-7b
+  namespace: llm-serving
+  labels:
+    app: vllm-qwen-7b
+    model: qwen2.5-7b-instruct
+    version: v1.0
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vllm-qwen-7b
+  # 滚动更新策略：先启新 Pod 再停旧 Pod，保证服务不中断
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # 最多多启 1 个
+      maxUnavailable: 0  # 不允许减少可用 Pod（GPU 资源紧张时可改为 1）
+  template:
+    metadata:
+      labels:
+        app: vllm-qwen-7b
+        model: qwen2.5-7b-instruct
+        version: v1.0
+      annotations:
+        # Prometheus 自动发现
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      # GPU 节点通常打了 taint，需要 toleration
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+
+      # 调度到 A10 节点
+      nodeSelector:
+        gpu-type: a10
+
+      # 优雅终止：等待正在处理的请求完成
+      terminationGracePeriodSeconds: 120
+
+      # --- initContainer: 从 OSS 下载模型（如果本地没有缓存）---
+      initContainers:
+      - name: model-downloader
+        image: registry.cn-hangzhou.aliyuncs.com/my-ns/ossutil:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          MODEL_DIR="/models/Qwen2.5-7B-Instruct"
+          if [ -f "$MODEL_DIR/config.json" ]; then
+            echo "Model already cached, skipping download"
+          else
+            echo "Downloading model from OSS..."
+            ossutil cp -r oss://my-models/Qwen2.5-7B-Instruct/ "$MODEL_DIR" --parallel 10
+          fi
+        env:
+        - name: OSS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: oss-credentials
+              key: access-key-id
+        - name: OSS_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oss-credentials
+              key: access-key-secret
+        volumeMounts:
+        - name: model-cache
+          mountPath: /models
+
+      # --- 主容器：vLLM 推理服务 ---
+      containers:
+      - name: vllm
+        image: registry.cn-hangzhou.aliyuncs.com/my-ns/vllm-server:v1.0
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        env:
+        - name: MODEL_NAME
+          value: "Qwen2.5-7B-Instruct"
+        - name: TENSOR_PARALLEL_SIZE
+          value: "1"
+        - name: MAX_MODEL_LEN
+          value: "8192"
+        - name: GPU_MEMORY_UTILIZATION
+          value: "0.90"
+
+        resources:
+          limits:
+            nvidia.com/gpu: 1    # 1 张 GPU
+            memory: "32Gi"
+            cpu: "8"
+          requests:
+            nvidia.com/gpu: 1
+            memory: "24Gi"
+            cpu: "4"
+
+        volumeMounts:
+        - name: model-cache
+          mountPath: /models
+          readOnly: true
+        - name: shm
+          mountPath: /dev/shm    # 共享内存，tensor parallel 通信需要
+
+        # 存活探针：模型加载需要时间，initialDelaySeconds 要设够
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 180  # 3 分钟等待模型加载
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+
+        # 就绪探针：只有就绪后才接收流量
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 180
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        # 启动探针：给模型加载一个宽松的时间窗口
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          failureThreshold: 30  # 最多等 60 + 30*10 = 360 秒
+
+      volumes:
+      # 模型权重缓存（生产环境建议用 PVC + NAS）
+      - name: model-cache
+        hostPath:
+          path: /data/models
+          type: DirectoryOrCreate
+      # 共享内存
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: "4Gi"

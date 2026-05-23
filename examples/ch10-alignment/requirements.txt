@@ -1,0 +1,15 @@
+# Ch10 对齐依赖
+# 建议使用 Python 3.10+ 和 CUDA 12.1+
+
+torch>=2.1.0
+transformers>=4.40.0
+trl>=0.8.0                 # DPOTrainer, RewardTrainer 等
+peft>=0.10.0               # LoRA 支持
+datasets>=2.18.0
+accelerate>=0.28.0
+
+# 评估
+lm-eval>=0.4.0             # lm-evaluation-harness
+
+# LLM-as-Judge（需要 OpenAI API key）
+# openai>=1.0.0

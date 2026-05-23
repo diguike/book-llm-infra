@@ -1,0 +1,224 @@
+# K8s 自动伸缩配置
+# 包含：HPA (基于 pending requests) + KEDA (基于 Prometheus)
+#
+# 前提：
+# 1. 已部署 Prometheus 并采集 vLLM metrics
+# 2. 方案 A：已安装 prometheus-adapter（用 HPA）
+# 3. 方案 B：已安装 KEDA（用 ScaledObject）
+
+---
+# ============================================================
+# 方案 A：原生 HPA + Prometheus Adapter
+# ============================================================
+
+# Step 1: Prometheus Adapter 配置（ConfigMap）
+# 将 vLLM 的 pending requests 指标暴露为 K8s custom metrics
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-adapter-config
+  namespace: monitoring
+data:
+  config.yaml: |
+    rules:
+    # 将 vLLM 的 num_requests_waiting 映射为 K8s custom metric
+    - seriesQuery: 'vllm:num_requests_waiting{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        matches: "vllm:num_requests_waiting"
+        as: "vllm_pending_requests"
+      metricsQuery: 'avg(vllm:num_requests_waiting{<<.LabelMatchers>>})'
+
+    # GPU Cache 使用率
+    - seriesQuery: 'vllm:gpu_cache_usage_perc{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        matches: "vllm:gpu_cache_usage_perc"
+        as: "vllm_kv_cache_usage"
+      metricsQuery: 'avg(vllm:gpu_cache_usage_perc{<<.LabelMatchers>>})'
+
+---
+# Step 2: HPA 配置
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vllm-hpa
+  namespace: llm-serving
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllm-qwen-7b
+  minReplicas: 2       # 最少 2 个副本（高可用）
+  maxReplicas: 8       # 最多 8 个副本（受 GPU 节点数限制）
+  metrics:
+  # 主要指标：pending requests 数量
+  - type: Pods
+    pods:
+      metric:
+        name: vllm_pending_requests
+      target:
+        type: AverageValue
+        averageValue: "5"   # 每个 Pod 平均排队 5 个请求时触发扩容
+  # 辅助指标：KV Cache 使用率
+  - type: Pods
+    pods:
+      metric:
+        name: vllm_kv_cache_usage
+      target:
+        type: AverageValue
+        averageValue: "85"  # KV Cache > 85% 时触发扩容
+
+  behavior:
+    # 扩容策略：积极但有节制
+    scaleUp:
+      stabilizationWindowSeconds: 60    # 1 分钟稳定窗口
+      policies:
+      - type: Pods
+        value: 2                         # 每次最多加 2 个 Pod
+        periodSeconds: 60
+      selectPolicy: Max
+
+    # 缩容策略：保守（GPU 启动慢，频繁缩扩很浪费）
+    scaleDown:
+      stabilizationWindowSeconds: 300   # 5 分钟稳定窗口
+      policies:
+      - type: Pods
+        value: 1                         # 每次最多减 1 个 Pod
+        periodSeconds: 120               # 每 2 分钟最多缩一次
+      selectPolicy: Min
+
+---
+# ============================================================
+# 方案 B：KEDA ScaledObject
+# ============================================================
+# KEDA 更灵活，直接支持 Prometheus 作为 scaler 来源
+# 安装: helm install keda kedacore/keda --namespace keda --create-namespace
+
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm-scaledobject
+  namespace: llm-serving
+spec:
+  scaleTargetRef:
+    name: vllm-qwen-7b
+  minReplicaCount: 2
+  maxReplicaCount: 8
+  cooldownPeriod: 300                    # 缩容冷却 5 分钟
+  pollingInterval: 15                     # 每 15 秒检查一次
+
+  triggers:
+  # 触发器 1：pending requests
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus.monitoring.svc:9090
+      metricName: vllm_pending_requests
+      query: |
+        avg(vllm:num_requests_waiting{namespace="llm-serving", deployment="vllm-qwen-7b"})
+      threshold: "5"
+      activationThreshold: "1"           # pending > 1 时才开始评估
+
+  # 触发器 2：请求延迟 P95
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus.monitoring.svc:9090
+      metricName: vllm_latency_p95
+      query: |
+        histogram_quantile(0.95,
+          rate(vllm:e2e_request_latency_seconds_bucket{
+            namespace="llm-serving",
+            deployment="vllm-qwen-7b"
+          }[5m])
+        )
+      threshold: "5"                     # P95 > 5 秒时扩容
+
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 60
+          policies:
+          - type: Pods
+            value: 2
+            periodSeconds: 60
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 120
+
+---
+# ============================================================
+# 辅助：模型预缓存 DaemonSet
+# ============================================================
+# 在每个 GPU 节点上预下载模型，避免扩容时等待模型下载
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: model-precache
+  namespace: llm-serving
+spec:
+  selector:
+    matchLabels:
+      app: model-precache
+  template:
+    metadata:
+      labels:
+        app: model-precache
+    spec:
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      nodeSelector:
+        gpu-type: a10
+      # 不需要 GPU 资源，只下载文件
+      initContainers:
+      - name: download-model
+        image: registry.cn-hangzhou.aliyuncs.com/my-ns/ossutil:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          MODEL_DIR="/models/Qwen2.5-7B-Instruct"
+          if [ -f "$MODEL_DIR/config.json" ]; then
+            echo "Model already cached"
+          else
+            echo "Pre-caching model..."
+            ossutil cp -r oss://my-models/Qwen2.5-7B-Instruct/ "$MODEL_DIR" --parallel 10
+          fi
+        env:
+        - name: OSS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: oss-credentials
+              key: access-key-id
+        - name: OSS_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oss-credentials
+              key: access-key-secret
+        volumeMounts:
+        - name: model-cache
+          mountPath: /models
+      containers:
+      - name: pause
+        image: registry.cn-hangzhou.aliyuncs.com/google_containers/pause:3.9
+        resources:
+          requests:
+            cpu: "10m"
+            memory: "32Mi"
+      volumes:
+      - name: model-cache
+        hostPath:
+          path: /data/models
+          type: DirectoryOrCreate

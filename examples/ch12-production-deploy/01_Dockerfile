@@ -1,0 +1,44 @@
+# vLLM 生产部署 Dockerfile
+# 基于官方 vLLM OpenAI 兼容镜像
+#
+# 构建：docker build -t vllm-server:v1.0 .
+# 运行：docker run -d --gpus all -v /data/models:/models -p 8000:8000 --shm-size=4g vllm-server:v1.0
+
+FROM vllm/vllm-openai:v0.6.6.post1
+
+LABEL maintainer="llm-infra-book"
+LABEL description="vLLM production deployment image"
+
+# 安装额外依赖（自定义逻辑、监控 agent 等）
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# 复制自定义配置（模型权重不打进镜像，通过 volume 挂载）
+COPY model_config.json /app/model_config.json
+
+# 环境变量（可在运行时覆盖）
+ENV MODEL_NAME="Qwen/Qwen2.5-7B-Instruct"
+ENV TENSOR_PARALLEL_SIZE=1
+ENV MAX_MODEL_LEN=8192
+ENV GPU_MEMORY_UTILIZATION=0.90
+ENV DTYPE="auto"
+
+# 健康检查：vLLM 提供 /health 端点
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=120s \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000
+
+# 使用 shell form 以支持环境变量展开
+# 生产建议：通过 K8s command/args 覆盖，而非依赖 Dockerfile 的 ENTRYPOINT
+ENTRYPOINT ["sh", "-c", "\
+  python -m vllm.entrypoints.openai.api_server \
+    --model /models/${MODEL_NAME} \
+    --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
+    --max-model-len ${MAX_MODEL_LEN} \
+    --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION} \
+    --dtype ${DTYPE} \
+    --enable-prefix-caching \
+    --host 0.0.0.0 \
+    --port 8000 \
+"]

@@ -1,0 +1,20 @@
+# 第 6 章 依赖
+
+# Ollama 客户端（Ollama 本身通过系统安装）
+requests>=2.31.0
+openai>=1.12.0
+
+# SGLang（需要 GPU）
+# pip install "sglang[all]"
+
+# llama-cpp-python (CPU)
+llama-cpp-python>=0.2.50
+
+# llama-cpp-python (CUDA GPU 加速)
+# CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python
+
+# llama-cpp-python (Apple Silicon Metal 加速)
+# CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python
+
+# Hugging Face 下载 GGUF 模型
+huggingface_hub>=0.20.0

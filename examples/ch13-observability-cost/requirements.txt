@@ -1,0 +1,8 @@
+# ch13 - 可观测性与成本优化
+prometheus-client>=0.21.0
+httpx>=0.27.0
+opentelemetry-api>=1.29.0
+opentelemetry-sdk>=1.29.0
+opentelemetry-exporter-otlp-proto-grpc>=1.29.0
+opentelemetry-instrumentation-fastapi>=0.50b0
+opentelemetry-semantic-conventions>=0.50b0

@@ -1,0 +1,28 @@
+# 全局基础依赖
+# 各章节可能有额外依赖，见 examples/<chapter>/requirements.txt
+
+# 核心
+torch>=2.0.0
+transformers>=4.36.0
+accelerate>=0.25.0
+datasets>=2.16.0
+
+# Tokenizer
+tiktoken>=0.5.0
+sentencepiece>=0.1.99
+
+# 可视化
+matplotlib>=3.7.0
+numpy>=1.24.0
+
+# 推理引擎（按需安装）
+# vllm>=0.4.0          # 第 5 章
+# auto-gptq>=0.7.0     # 第 7 章
+# autoawq>=0.2.0       # 第 7 章
+
+# 微调（按需安装）
+# peft>=0.8.0          # 第 9 章
+# trl>=0.7.0           # 第 10 章
+
+# RAG（按需安装）
+# sentence-transformers>=2.3.0  # 第 14 章

@@ -1,0 +1,5 @@
+torch>=2.0.0
+transformers>=4.36.0
+auto-gptq>=0.7.0
+autoawq>=0.2.0
+numpy>=1.24.0

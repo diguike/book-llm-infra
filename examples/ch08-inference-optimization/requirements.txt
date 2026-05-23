@@ -1,0 +1,4 @@
+torch>=2.0.0
+transformers>=4.36.0
+# vllm>=0.4.0          # speculative decoding, prefix caching
+# outlines>=0.1.0      # constrained decoding (04_constrained_decoding.py)

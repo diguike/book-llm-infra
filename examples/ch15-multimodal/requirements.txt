@@ -1,0 +1,31 @@
+# Chapter 15: 多模态模型基础设施 - 依赖列表
+#
+# 安装方式:
+#   pip install -r requirements.txt
+#
+# 注意:
+#   - vllm 需要 CUDA 环境，CPU-only 机器无法安装
+#   - faster-whisper 同样推荐 GPU 环境
+#   - 如果只跑 03_multimodal_pipeline.py 的 demo，只需要 Pillow
+
+# === 核心依赖 ===
+# vLLM: LLM/VLM 推理引擎 (需要 CUDA 11.8+ 或 12.x)
+vllm>=0.7.0
+
+# faster-whisper: Whisper 的高性能推理实现 (CTranslate2 引擎)
+faster-whisper>=1.1.0
+
+# === Web 服务 ===
+fastapi>=0.115.0
+uvicorn>=0.34.0
+python-multipart>=0.0.18  # FastAPI 文件上传支持
+
+# === 图片处理 ===
+Pillow>=10.0.0
+
+# === 网络请求 ===
+requests>=2.32.0
+aiohttp>=3.11.0
+
+# === 工具库 ===
+numpy>=1.26.0
