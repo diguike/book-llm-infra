@@ -18,8 +18,8 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/<your-org>/llm-infra-book.git
-cd llm-infra-book
+git clone https://github.com/diguike/book-llm-infra.git
+cd book-llm-infra
 
 # 安装 Python 依赖（推荐 Python 3.10+）
 pip install -r requirements.txt
