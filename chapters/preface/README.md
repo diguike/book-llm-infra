@@ -1,3 +1,7 @@
+> **配套资源**  
+> 源码仓库 · [github.com/diguike/book-llm-infra](https://github.com/diguike/book-llm-infra)  
+> 在线阅读 · [inferloop.dev/llm-infra](https://inferloop.dev/llm-infra)
+
 ## 这本书是写给谁的
 
 2024 年初，我在做一个 Agent 项目。用户反馈说"回复太慢了"，我看了看代码——前端没问题，API 调用也正常，延迟全在模型推理上。我打开 vLLM 的文档，看到 PagedAttention、Continuous Batching、KV Cache 这些词，一个都不认识。

@@ -1,5 +1,8 @@
 # LLM Infra 从入门到实践
 
+> 在线阅读 · [inferloop.dev/llm-infra](https://inferloop.dev/llm-infra)  
+> 所有书目 · [inferloop.dev](https://inferloop.dev)
+
 > 一本写给 Agent 开发者的 LLM 底层技术指南
 
 面向应用层工程师（前端/全栈/Agent 开发者），系统化学习 LLM 基础设施知识。
@@ -42,3 +45,18 @@ cd examples/ch02-transformer
 ## License
 
 CC BY-NC-SA 4.0
+
+
+## 相关书
+
+来自同一作者的其他书:
+
+- [《Hermes Agent 源码解读》](https://inferloop.dev/hermes-agent)
+- [《AI Token 中转站实战》](https://inferloop.dev/llm-gateway)
+- [《Agent Memory 工程实战》](https://inferloop.dev/claude-mem)
+- [《百万级 AI Agent 平台架构》](https://inferloop.dev/enterprise-agent)
+- [《OpenClaw 源码解析》](https://inferloop.dev/openclaw)
+- [《Transformer 教学》](https://inferloop.dev/transformer)
+- [《Claude Code Skill 开发指南》](https://inferloop.dev/claude-skill)
+- [《Claude 插件官方指南》](https://inferloop.dev/claude-plugins)
+- [《自己动手写 AI Agent》](https://inferloop.dev/ling-agent)
