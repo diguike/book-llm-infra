@@ -180,7 +180,7 @@ cd llama.cpp && cmake -B build && cmake --build build --config Release
 
 ### Ollama
 
-llama.cpp 的用户友好封装。把"下载模型 + 量化 + 配置 + 运行"简化成一条命令。命令行体验类比 `docker run`：一个名字搞定一切。
+Ollama 早期是 llama.cpp 的用户友好封装，2024 年起逐步引入自研推理引擎，目前多模态和 Llama 4、Gemma 3 等新模型走自研引擎，老模型仍依赖 llama.cpp。它把"下载模型 + 量化 + 配置 + 运行"简化成一条命令，命令行体验类比 `docker run`：一个名字搞定一切。
 
 安装方式按机器分两种：
 

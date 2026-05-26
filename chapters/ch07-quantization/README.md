@@ -2,7 +2,10 @@
 
 量化是目前大模型落地最实用的技术之一。一个 7B 模型用 FP16 跑需要 14GB 显存，量化到 INT4 只要 4GB 左右——这意味着你可以在一张消费级显卡上跑原本需要 A100 的模型。本章会讲清楚量化的原理、主流方案的差异，以及如何动手量化一个真实模型。
 
-> **7.4 节里执行 GPTQ（GPT Quantization，基于二阶梯度信息逐层量化的 PTQ 算法，7.3 节详解）/ AWQ（Activation-aware Weight Quantization，激活感知的权重量化，7.3 节详解）量化的部分只能在 Linux GPU 服务器跑**——校准（calibration，用一小批数据跑前向、统计权重和激活分布以确定量化参数）过程要在 GPU 上做几小时的 forward。Mac 本地可以跳到 7.4 节中的 GGUF（GPT-Generated Unified Format，llama.cpp 生态的单文件量化模型格式，ch04 介绍过）部分：llama.cpp（C/C++ 实现的轻量 LLM 推理引擎，能在 CPU、Metal、CUDA 上跑量化模型）的转换和量化工具在 Apple Silicon（苹果 M 系列 ARM 芯片，集成 CPU/GPU/神经网络单元）上完全跑得动，CPU/Metal（苹果自家的 GPU 图形/计算 API，类似 macOS 上的 CUDA）都可以。
+**本章环境提示**：7.4 节会动手做三种量化实操，分两类环境跑。
+
+- **GPTQ / AWQ 部分只能在 Linux GPU 服务器跑**：这两种方案依赖校准（calibration，用一小批样本跑前向、统计权重和激活分布以确定量化参数），要在 GPU 上做几小时 forward。算法原理 7.3 节会详解
+- **GGUF 部分 Mac 本地就能跑**：llama.cpp 的转换和量化工具在 Apple Silicon 上完全跑得动，CPU 或 Metal 都行
 
 ## 7.1 为什么量化有效
 
@@ -101,9 +104,16 @@ QAT（Quantization-Aware Training，量化感知训练——训练时在前向�
 
 GPTQ（Generative Pre-trained Transformer Quantization，[arxiv:2210.17323](https://arxiv.org/abs/2210.17323)，2022 年提出，名字来自论文里把这个方法应用到 GPT 系列模型）是第一个让 INT4 量化大模型真正实用的方法。它的核心思路：
 
-1. **逐层量化**：不是一次性量化整个模型，而是一层一层地处理。量化一层时，用 Hessian 矩阵（二阶导数信息——一阶导是梯度，二阶导描述曲面弯曲程度，用于衡量哪些权重对损失更敏感）来衡量每个权重对输出的影响。
+1. **逐层量化**：不是一次性量化整个模型，而是一层一层地处理。量化一层时，用 Hessian 矩阵衡量每个权重对输出的影响。
 2. **最优量化顺序**：先量化对输出影响最小的权重，然后调整剩余权重来补偿误差。
 3. **分组量化**：每 128 个权重共享一组量化参数，平衡精度和压缩比。
+
+**Hessian 在这里是什么、为什么用它**：Hessian 是函数二阶偏导数组成的矩阵——一阶导（梯度）告诉你"斜率"，二阶导（Hessian）告诉你"曲率"，即斜率自己变化得有多快。GPTQ 要最小化的目标是"量化前后这层输出的差异 ||XW − XW'||²"，把这个损失对权重做二阶泰勒展开，得到的就是 **H = XᵀX**，X 就是这层输入的激活。换句话说，Hessian 不是模型里自带的某个张量，而是拿校准数据跑前向得到 X 后**现算**出来的——这正是为什么 GPTQ 必须有校准过程。
+
+有了 H，GPTQ 才能做两件事：
+
+- **衡量敏感度**：H 对角线越大的权重，扰动它对输出影响越大，要小心量化
+- **算误差补偿**：用 H⁻¹ 计算"量化掉权重 i 后，剩下的权重要往哪偏多少才能把误差摊掉"
 
 **工具链演进**：原始的 AutoGPTQ（HuggingFace 生态最早的 GPTQ 量化库）项目已在 2025 年 4 月归档，不再维护。它的继任者是 [GPTQModel](https://github.com/ModelCloud/GPTQModel)（ModelCloud 团队维护的多算法量化库），不仅支持 GPTQ，还支持 AWQ、GGUF、FP8（详见后文 7.3 节专门小节）等多种量化格式，并且持续更新中。
 
@@ -248,9 +258,16 @@ model_id = "Qwen/Qwen2.5-7B-Instruct"
 output_dir = "Qwen2.5-7B-Instruct-GPTQ-Int4"
 
 # 1. 加载 tokenizer
+#    校准时要把文本切成 token id 喂给模型，tokenizer 必须和待量化模型严格匹配
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
-# 2. 准备校准数据（1024 条，来自 C4 数据集）
+# 2. 准备校准数据
+#    校准过程 = 跑 N 条样本前向、收集每层激活 X、算 H = XᵀX
+#    经验值：
+#      - 条数：128 ~ 1024 即可，多了边际收益递减
+#      - 文本来源：通用语料就够；服务垂直领域时混入领域文本效果更好
+#      - 长度：≥ 512 tokens，太短统计不到长序列上的激活分布
+#    这里用 C4（Colossal Clean Crawled Corpus，Google 清洗过的英文网页语料）
 calibration_dataset = [
     tokenizer(example["text"])
     for example in load_dataset(
@@ -262,48 +279,84 @@ calibration_dataset = [
 
 # 3. 配置量化参数
 quant_config = QuantizeConfig(
-    bits=4,           # 4-bit 量化
-    group_size=128,   # 每 128 个权重一组
+    bits=4,           # 量化位数。4 是精度/压缩的最佳平衡；3-bit 损失明显，8-bit 收益小
+    group_size=128,   # 每 128 个权重共享一组 scale/zero-point
+                      # 越小越精确，元数据开销越大；128 是社区默认折中
+    # 其他可选参数（默认值通常够用）：
+    #   desc_act=False     按激活幅度重排量化顺序，True 精度↑ 速度↓
+    #   damp_percent=0.01  Hessian 阻尼系数，矩阵奇异时加这点对角线防数值爆炸
+    #   sym=True           对称量化（无 zero-point），kernel 更快、精度略低
 )
 
-# 4. 加载模型
+# 4. 加载待量化模型（FP16 原始权重）
 model = GPTQModel.load(model_id, quant_config)
 
-# 5. 执行量化（在 A100 上大约需要 1-2 小时）
+# 5. 执行量化
+#    流程：逐层跑前向收集激活 → 算 Hessian → 量化该层权重 → 下一层
+#    资源：A100 上 7B 模型大约 1-2 小时；峰值显存 ≈ FP16 模型大小 + 校准 batch
 model.quantize(calibration_dataset)
 
 # 6. 保存量化模型
+#    产物：safetensors（INT4 权重）+ quantize_config.json（量化元数据）+ tokenizer 文件
+#    可被 vLLM / SGLang / transformers 直接加载，无需额外转换
 model.save(output_dir)
 tokenizer.save_pretrained(output_dir)
 print(f"量化完成，模型保存到 {output_dir}")
 ```
+
+**跑这段代码会发生什么**：
+
+- 第一次会从 HuggingFace 下载 14 GB 的 FP16 模型（建议先 `huggingface-cli download` 预下载，或挂国内镜像 `HF_ENDPOINT=https://hf-mirror.com`）
+- 校准数据下载约 200 MB（C4 的一个分片）
+- 量化过程中显存占用接近原模型大小，`nvidia-smi` 能看到峰值
+- 结束后输出目录约 4 GB
+
+**AWQ 的代码长得几乎一样**：GPTQModel 同时支持 AWQ，把 `QuantizeConfig(...)` 里加上 `quant_method="awq"` 即可，校准流程完全一致；用社区另一个工具 `llm-compressor` 也是同一套"加载模型 → 喂校准数据 → 保存"的三段式。
 
 ### 使用 llama.cpp 转换 GGUF
 
 ```bash
 # examples/ch07-quantization/04_gguf_convert.sh
 
-# 1. 克隆 llama.cpp
+# 1. 克隆并编译 llama.cpp
+#    Mac 直接 make 走 Metal；Linux 默认 CPU only，要带 NVIDIA GPU 加 `GGML_CUDA=1 make`
 git clone https://github.com/ggml-org/llama.cpp
 cd llama.cpp && make -j
 
-# 2. 从 HuggingFace 下载模型（或用本地路径）
+# 2. 准备 HuggingFace 格式的原始模型
+#    转换器读的是标准 transformers 目录结构（config.json + safetensors + tokenizer 文件）
 # pip install huggingface-hub
 # huggingface-cli download Qwen/Qwen2.5-7B-Instruct --local-dir ./models/Qwen2.5-7B-Instruct
 
-# 3. 转换为 GGUF 格式（FP16）
+# 3. HF 格式 → GGUF FP16 中间文件
+#    convert_hf_to_gguf.py 做的事：
+#      - 合并 safetensors 分片、按 llama.cpp 期望的 tensor 命名重排
+#      - 拼上 GGUF 元数据（架构、tokenizer、chat template 等），打成单文件
+#    --outtype f16 保留原始精度，产物体积和原模型相当（~14 GB）
+#    为什么要先转 FP16 中间文件再量化：llama-quantize 只接受 GGUF 格式作为输入
 python convert_hf_to_gguf.py ./models/Qwen2.5-7B-Instruct \
     --outfile ./models/qwen2.5-7b-instruct-f16.gguf \
     --outtype f16
 
-# 4. 量化为 Q4_K_M（推荐的平衡选择）
+# 4. FP16 GGUF → INT4 GGUF
+#    Q4_K_M = K-quants 算法的 4-bit Medium 变体，精度/体积的社区默认推荐
+#    其他常用：Q4_K_S（更小）/ Q5_K_M（精度更好，体积↑）/ Q8_0（接近 FP16，体积是它一半）
+#    完整列表跑 `./llama-quantize --help` 看
 ./llama-quantize ./models/qwen2.5-7b-instruct-f16.gguf \
     ./models/qwen2.5-7b-instruct-q4_k_m.gguf Q4_K_M
 
 # 5. 测试推理
+#    -m 模型路径；-p 提示词；-n 生成 token 数
+#    -ngl N 把 N 层算子放到 GPU（Metal/CUDA），99 表示全部上 GPU
 ./llama-cli -m ./models/qwen2.5-7b-instruct-q4_k_m.gguf \
-    -p "Hello, how are you?" -n 128
+    -p "Hello, how are you?" -n 128 -ngl 99
 ```
+
+**跑这段会得到什么**：
+
+- FP16 中间文件 ~14 GB（量化完成后可以删掉）
+- Q4_K_M 产物 ~4 GB（这才是要分发/部署的文件）
+- llama-cli 会打印一段补全文本，末尾附带 `prompt eval`（prefill 阶段）和 `eval`（decode 阶段）的 token/s 统计
 
 ### 量化前后效果对比
 
@@ -317,6 +370,16 @@ python convert_hf_to_gguf.py ./models/Qwen2.5-7B-Instruct \
 | 困惑度 (PPL，Perplexity，语言模型在测试集上预测下一个 token 的不确定度，越低越好) | 6.42 | 6.58 | 6.51 | 6.55 |
 | MMLU（Massive Multitask Language Understanding，57 个学科的多选题集合，业界最常用的通用能力 benchmark） 分数 | 70.2% | 69.1% | 69.5% | 69.3% |
 
+**这组指标怎么测**：
+
+- **模型大小**：模型目录里权重文件（`*.safetensors` / `*.gguf`）的 `du -sh` 总和，不算 tokenizer
+- **推理显存**：跑生成的同时调 `torch.cuda.max_memory_allocated()` 采峰值（生成 256 tokens 之后读），包含权重 + KV cache + 中间激活
+- **生成速度**：固定 5 条 prompt（每条 ~20 tokens），各生成 128 tokens，`do_sample=False` 走贪心解码避免随机性；先 warmup 1 次（编译/缓存 kernel）再正式测，取均值 `生成 token 数 / 总耗时`
+- **困惑度 PPL**：在 wikitext-2 test 集上用滑动窗口（max_length=2048, stride=512）算 `exp(平均 cross-entropy loss)`。最简单的做法是直接用 [`lm-evaluation-harness`](https://github.com/EleutherAI/lm-evaluation-harness)（EleutherAI 维护的事实标准评测框架）：`lm_eval --model hf --model_args pretrained=<path> --tasks wikitext` 一行命令搞定
+- **MMLU 分数**：同样用 `lm-evaluation-harness`，跑 `--tasks mmlu --num_fewshot 5`，结果里看 `acc` 字段。完整跑一遍 57 个学科 A100 上约 30 分钟
+
+量化损失（PPL +0.1~0.2、MMLU 掉 0.5-1 个百分点）属于日常使用感知不到的范围，但跑 benchmark 数据上是看得见的。
+
 拆解一下这组数字：
 1. **INT4 量化后模型大小缩小 ~3.6 倍**，和理论值（16/4=4 倍）接近，多出来的是量化参数（scale, zero-point）的开销。
 2. **GPU 上 INT4 推理反而更快**。因为 LLM 推理是 memory-bound 的（受显存带宽限制而非算力限制，对应概念是 compute-bound）——瓶颈不是计算而是从显存读取权重。权重小了，读取快了，推理就快了。
@@ -324,6 +387,61 @@ python convert_hf_to_gguf.py ./models/Qwen2.5-7B-Instruct \
 4. **GGUF Q4_K_M 在 CPU 上也能跑到 32 tok/s**，对于本地开发和演示来说完全够用。
 
 > 完整的 benchmark 代码见 `examples/ch07-quantization/05_quantization_benchmark.py`
+
+### 评估量化模型效果用什么指标
+
+上面表里出现的 PPL 和 MMLU，几乎是每篇量化论文必出现的两个数字。但只看数字不够，得知道它们分别测了什么、什么测不出来，才能在自己的场景下做对评测。
+
+#### PPL：测语言建模本能
+
+公式 `PPL = exp(平均 cross-entropy loss)`。直觉上，**模型对真实文本越自信，PPL 越低**。完美预测每个词的模型 PPL = 1；瞎猜的均匀分布模型 PPL ≈ 词表大小。
+
+可以类比成：PPL = 10 大致相当于模型在每一步把"对的那个词"挤进了 10 个候选里——挤得越紧，PPL 越低。
+
+为什么量化评测要看它：量化引入的权重噪声会直接让模型对"它本来很确信的下一个词"变得不那么确信，这种退化最先体现在 PPL 上。一个 PPL 都明显涨的量化方法，下游肯定也好不到哪去。
+
+**能反映**：权重精度损失带来的概率分布偏移、长尾词的预测退化。
+
+**测不到**：**指令跟随、推理链、对话连贯性**。一个 PPL 几乎没变的量化模型，可能在 chat 场景出现明显的"答非所问"或"思维链断裂"——PPL 只看下一个 token 的概率，看不见这种宏观失败。
+
+数据集惯例：wikitext-2 test 集是社区事实标准。关键是和参考论文/榜单用同一份数据，否则数字没有可比性。
+
+#### MMLU：测知识使用能力
+
+57 个学科、共 1.4 万道 4 选 1 选择题，从初等数学到法律到伦理学，由 Dan Hendrycks 等人 2020 年提出。
+
+评测方式：5-shot——先给 5 道同学科样例题（题目 + 答案），再让模型答一道新题。把模型在 A/B/C/D 四个选项 token 上的输出概率做 argmax，对比标准答案算 accuracy。
+
+它在 PPL 上面一层：**PPL 测"会不会说"，MMLU 测"会不会用知识答题"**。量化如果伤到了模型从权重里取知识的通路，MMLU 会先于 PPL 在某些学科明显掉点。
+
+**能反映**：知识储备退化、英文阅读理解、单步推理。
+
+**测不到**：**自由生成质量**（只看 4 个选项的概率，不看模型实际生成长什么样）、**中文能力**（题目全英文）、**多轮对话**、**长上下文**、**指令对齐**。
+
+#### 为什么是这两个，不是别的
+
+PPL + MMLU 可以理解为模型基本面的双检：一个测"语言模型本能"，一个测"知识使用能力"，是两件不同的事。两个都几乎不变 = 量化损失在可接受范围内。
+
+这套组合便宜（合计半小时跑完）、有公开 leaderboard、各家论文都用——所以成了事实标准。
+
+但这两个能盖住的场景**很有限**。下面这些指标至少要按业务场景挑一个跑一遍。
+
+#### 业务场景常用的补充指标
+
+| 指标 | 测什么 | 数据集 | 量化场景下为什么值得测 |
+|------|--------|--------|----------------------|
+| **HumanEval / MBPP** | 代码生成 | OpenAI 164 道编程题 / MBPP 974 道 | 代码补全/Copilot 类应用必跑 |
+| **GSM8K / MATH** | 数学推理（链式思考） | 8.5k 小学数学应用题 / 12.5k 竞赛题 | 量化对 CoT（Chain-of-Thought，模型一步步推理的输出形式）影响最敏感的地方 |
+| **C-Eval / CMMLU** | 中文知识与推理 | 13k 中文学科选择题 / 11.5k 中国知识题 | 中文模型必跑，MMLU 在这块是盲区 |
+| **MT-Bench / Arena Hard** | 多轮对话质量 | 80 道开放题，GPT-4 当裁判打分 | 量化对对话流畅性的影响只有这种 LLM-as-judge 测得出来 |
+| **LongBench / RULER** | 长上下文理解 | 多任务长文档问答 / 大海捞针变种 | 量化会不会让长序列上的注意力变得不稳定 |
+| **IFEval / AlignBench** | 指令跟随 / 对齐 | 英文 / 中文指令任务集 | 量化是否让模型"变笨/变倔"——不按指令格式回答 |
+
+#### 实操建议
+
+- **快速摸底**：PPL + MMLU 这一对足够过滤明显不行的量化方案
+- **业务场景**：按下游任务挑 1-2 个——做代码就上 HumanEval，做客服就上 MT-Bench，做中文就上 C-Eval
+- **生产上线前必做**：自己整理 100-500 条**真实业务样本**，量化前后各跑一遍，让产品同学盲评。这一步公开 benchmark 替代不了——再标准的指标也只是间接近似，业务样本才是直接证据
 
 ### 小结
 

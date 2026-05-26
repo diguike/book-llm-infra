@@ -1,110 +1,108 @@
-"""用 AutoGPTQ 量化模型
+"""用 GPTQModel 把模型量化为 GPTQ INT4
 
 使用方法:
-    # 量化 Qwen2-7B 到 INT4
-    python 02_gptq_quantize.py --model Qwen/Qwen2-7B --bits 4 --output ./qwen2-7b-gptq-int4
+    # 量化 Qwen2.5-7B 到 INT4
+    python 02_gptq_quantize.py --model Qwen/Qwen2.5-7B-Instruct --bits 4 --output ./qwen2.5-7b-gptq-int4
 
-硬件要求: GPU 24GB+ (量化过程需要加载完整模型)
+硬件要求: NVIDIA GPU 24 GB+（量化过程要加载完整 FP16 模型）
+
+依赖:
+    pip install gptqmodel datasets
+
+历史背景:
+    原 AutoGPTQ 在 2025 年 4 月归档，社区已迁移到 GPTQModel（ModelCloud 维护）。
+    GPTQModel 同时支持 GPTQ / AWQ / GGUF / FP8 多种量化方法，本脚本只演示 GPTQ。
 """
 import argparse
 import time
-import torch
-from transformers import AutoTokenizer
 
-def get_calibration_data(tokenizer, n_samples=128, seq_len=2048):
-    """生成校准数据集（实际使用时应用真实数据）"""
-    print(f"准备校准数据: {n_samples} 条, 长度 {seq_len}")
 
-    # 这里用简单的中文文本作为示例
-    # 实际量化时建议用 C4 或领域相关数据
-    sample_texts = [
-        "大语言模型的推理优化是一个重要的研究方向。量化技术可以显著降低模型的显存占用和推理延迟。",
-        "Transformer 架构由 Self-Attention 和 Feed-Forward Network 组成。每一层都会对输入进行非线性变换。",
-        "KV Cache 是推理加速的核心技术。它缓存了之前 token 的 Key 和 Value 向量，避免重复计算。",
-        "PagedAttention 借鉴了操作系统虚拟内存的思想，将 KV Cache 分页管理，大幅提升显存利用率。",
-    ] * (n_samples // 4 + 1)
+def get_calibration_dataset(tokenizer, n_samples: int = 1024):
+    """从 C4 加载校准样本。
 
-    calibration_data = []
-    for text in sample_texts[:n_samples]:
-        tokens = tokenizer(text, return_tensors="pt", padding="max_length",
-                          max_length=seq_len, truncation=True)
-        calibration_data.append(tokens.input_ids)
+    校准（calibration）= 跑 N 条文本前向、收集每层激活 X、算 H = X^T X。
+    经验：128 ~ 1024 条够用，多了边际收益递减。
+    服务垂直领域时把领域文本混进来效果更好。
+    """
+    from datasets import load_dataset
 
-    return calibration_data
+    print(f"准备校准数据: {n_samples} 条（来自 C4 英文网页语料）")
+    return [
+        tokenizer(example["text"])
+        for example in load_dataset(
+            "allenai/c4",
+            data_files="en/c4-train.00001-of-01024.json.gz",
+            split="train",
+        ).select(range(n_samples))
+    ]
 
-def quantize_gptq(model_name: str, bits: int, output_dir: str):
-    """GPTQ 量化流程"""
+
+def quantize_gptq(model_id: str, bits: int, output_dir: str, n_samples: int):
+    """GPTQ 量化主流程"""
     try:
-        from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
+        from gptqmodel import GPTQModel, QuantizeConfig
     except ImportError:
-        print("请先安装 auto-gptq: pip install auto-gptq")
-        print("注意: auto-gptq 需要 CUDA 环境")
+        print("请先安装 gptqmodel: pip install gptqmodel")
+        print("（注意：旧的 auto-gptq 已归档，本脚本用 gptqmodel）")
         return
 
-    print(f"开始 GPTQ 量化: {model_name} -> INT{bits}")
+    from transformers import AutoTokenizer
+
+    print(f"开始 GPTQ 量化: {model_id} -> INT{bits}")
     print(f"输出目录: {output_dir}")
 
     # 1. 配置量化参数
-    quantize_config = BaseQuantizeConfig(
-        bits=bits,
-        group_size=128,    # 每 128 个权重共享一个 scale/zero_point
-        desc_act=False,    # True 精度更好但更慢，一般用 False
-        damp_percent=0.1,  # Hessian 阻尼系数
+    quant_config = QuantizeConfig(
+        bits=bits,          # 量化位数。4 是精度/压缩的最佳平衡；3-bit 损失明显，8-bit 收益小
+        group_size=128,     # 每 128 个权重共享一组 scale/zero-point；越小越精确，元数据开销越大
+        desc_act=False,     # True 按激活幅度重排顺序，精度↑ 速度↓，一般 False 足够
+        damp_percent=0.01,  # Hessian 阻尼系数，矩阵奇异时加这点对角线防数值爆炸
+        sym=True,           # 对称量化（无 zero-point），kernel 更快、精度略低
     )
+    print(f"\n量化配置: bits={bits}, group_size=128, desc_act=False, sym=True")
 
-    print(f"\n量化配置:")
-    print(f"  bits: {bits}")
-    print(f"  group_size: 128")
-    print(f"  desc_act: False")
+    # 2. 加载 tokenizer（校准要把文本切成 token id，必须和待量化模型严格匹配）
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
-    # 2. 加载模型
-    print(f"\n加载模型: {model_name} ...")
+    # 3. 加载待量化模型（GPTQModel.load 内部用 transformers 加载 FP16 权重，再包一层量化器）
+    print(f"\n加载模型: {model_id} ...")
     start = time.time()
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    model = AutoGPTQForCausalLM.from_pretrained(
-        model_name,
-        quantize_config=quantize_config,
-        trust_remote_code=True,
-    )
+    model = GPTQModel.load(model_id, quant_config)
     print(f"模型加载完成, 耗时 {time.time() - start:.1f}s")
 
-    # 3. 准备校准数据
-    calibration_data = get_calibration_data(tokenizer)
+    # 4. 准备校准数据
+    calibration_dataset = get_calibration_dataset(tokenizer, n_samples)
 
-    # 4. 执行量化
-    print(f"\n开始量化 (这可能需要 10-30 分钟) ...")
+    # 5. 执行量化
+    #    流程：逐层跑前向收集激活 → 算 Hessian → 量化该层权重 → 进入下一层
+    #    资源：A100 上 7B 模型大约 1-2 小时；峰值显存 ≈ FP16 模型大小 + 校准 batch
+    print(f"\n开始量化（A100 上 7B 模型大约 1-2 小时）...")
     start = time.time()
-    model.quantize(calibration_data)
+    model.quantize(calibration_dataset)
     print(f"量化完成, 耗时 {time.time() - start:.1f}s")
 
-    # 5. 保存
+    # 6. 保存
+    #    产物：safetensors（INT4 权重）+ quantize_config.json + tokenizer 文件
+    #    可被 vLLM / SGLang / transformers 直接加载，无需额外转换
     print(f"\n保存量化模型到 {output_dir} ...")
-    model.save_quantized(output_dir)
+    model.save(output_dir)
     tokenizer.save_pretrained(output_dir)
     print("保存完成")
 
-    # 6. 验证
-    print(f"\n验证量化模型 ...")
-    model = AutoGPTQForCausalLM.from_quantized(
-        output_dir, device="cuda:0", trust_remote_code=True
-    )
-    inputs = tokenizer("量化后的模型", return_tensors="pt").to("cuda:0")
-    with torch.no_grad():
-        outputs = model.generate(**inputs, max_new_tokens=50)
-    print(f"生成测试: {tokenizer.decode(outputs[0], skip_special_tokens=True)}")
 
 def main():
-    parser = argparse.ArgumentParser(description="GPTQ 模型量化")
-    parser.add_argument("--model", type=str, default="Qwen/Qwen2-7B",
-                       help="HuggingFace 模型名称或本地路径")
+    parser = argparse.ArgumentParser(description="GPTQ 模型量化（基于 GPTQModel）")
+    parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-7B-Instruct",
+                        help="HuggingFace 模型名称或本地路径")
     parser.add_argument("--bits", type=int, default=4, choices=[2, 3, 4, 8],
-                       help="量化位数")
+                        help="量化位数")
     parser.add_argument("--output", type=str, default="./quantized-model-gptq",
-                       help="输出目录")
-    parser.add_argument("--samples", type=int, default=128,
-                       help="校准数据条数")
+                        help="输出目录")
+    parser.add_argument("--samples", type=int, default=1024,
+                        help="校准样本数（128 ~ 1024，多了边际收益递减）")
     args = parser.parse_args()
-    quantize_gptq(args.model, args.bits, args.output)
+    quantize_gptq(args.model, args.bits, args.output, args.samples)
+
 
 if __name__ == "__main__":
     main()

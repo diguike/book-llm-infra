@@ -1,5 +1,10 @@
-torch>=2.0.0
-transformers>=4.36.0
-auto-gptq>=0.7.0
-autoawq>=0.2.0
+torch>=2.1.0
+transformers>=4.45.0
+datasets>=2.16.0
 numpy>=1.24.0
+
+# GPTQ 量化（AutoGPTQ 已归档，用其继任者 GPTQModel）
+gptqmodel>=2.0.0
+
+# AWQ 量化（AutoAWQ 已归档，用 vLLM 团队官方推荐的 llm-compressor）
+llmcompressor>=0.3.0
