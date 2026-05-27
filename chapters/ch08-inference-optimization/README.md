@@ -16,7 +16,7 @@
 Q @ K^T → [n, n] 矩阵 → softmax → @ V → 输出
 ```
 
-这里 Q、K、V 分别是 query / key / value 矩阵（第 2 章已介绍），`softmax` 是把一组实数归一化成概率分布的函数。中间的 `[n, n]` 矩阵是问题的根源。以 Llama 2 7B 单层单头为例：
+这里 Q、K、V 分别是 query / key / value 矩阵，`softmax` 是把一组实数归一化成概率分布的函数。中间的 `[n, n]` 矩阵是问题的根源。以 Llama 2 7B 单层单头为例：
 
 | Sequence Length | Attention 矩阵大小 | 显存 (FP16) |
 |----------------|-------------------|------------|
@@ -25,7 +25,7 @@ Q @ K^T → [n, n] 矩阵 → softmax → @ V → 输出
 | 32K | 1024M | 2 GB |
 | 128K | 16384M | 32 GB |
 
-乘以 32 层 × 32 头，32K context 下光是 Attention 中间矩阵就要 2TB 显存——这么大显然不可能真的全存下来。实际中 PyTorch 会逐步计算释放，但 **HBM**（High Bandwidth Memory，GPU 主显存，第 3 章已介绍）的读写次数依然是 O(n²)。
+乘以 32 层 × 32 头，32K context 下光是 Attention 中间矩阵就要 2TB 显存——这么大显然不可能真的全存下来。实际中 PyTorch 会逐步计算释放，但 **HBM**（High Bandwidth Memory，GPU 主显存）的读写次数依然是 O(n²)。
 
 GPU 的内存层次：
 
@@ -42,7 +42,7 @@ GPU 的内存层次：
 └──────────────┘
 ```
 
-**SRAM**（Static RAM，静态随机存储器，GPU 上挂在每个 SM 内部的片上高速缓存，第 3 章已介绍）比 HBM 快近 10 倍，但小得多。**SM**（Streaming Multiprocessor，流式多处理器，GPU 的基本计算单元）。标准 Attention 的做法是在 HBM 中计算完整的 `[n, n]` 矩阵，来回搬运数据。FlashAttention 的思路：能不能在 SRAM 里分块算完，根本不把完整的 `[n, n]` 写回 HBM？
+**SRAM**（Static RAM，静态随机存储器，GPU 上挂在每个 SM 内部的片上高速缓存）比 HBM 快近 10 倍，但小得多。**SM**（Streaming Multiprocessor，流式多处理器，GPU 的基本计算单元）。标准 Attention 的做法是在 HBM 中计算完整的 `[n, n]` 矩阵，来回搬运数据。FlashAttention 的思路：能不能在 SRAM 里分块算完，根本不把完整的 `[n, n]` 写回 HBM？
 
 ### FlashAttention 的核心思想
 
@@ -77,7 +77,7 @@ FlashAttention（一次搞定）:
 | v2 (2023) | 优化并行度，减少 non-matmul FLOPs | 2x |
 | v3 (2024) | 利用 H100 的异步 TMA 和 FP8 | 1.5-2x over v2 |
 
-表里的 **non-matmul FLOPs** 指除矩阵乘法之外的运算（softmax、mask、缩放等），这些操作在 GPU 上比 matmul 慢得多，v2 重新排布计算顺序压低了它们的占比。**TMA**（Tensor Memory Accelerator，张量内存加速器）是 H100 引入的硬件单元，用异步搬运代替 SM 的同步 load/store；**FP8**（8 位浮点数，第 7 章已介绍）是 Hopper 架构的新数值类型，配合 **FP8 Tensor Core**（专门做低精度矩阵乘的硬件单元）能再翻一倍吞吐。
+表里的 **non-matmul FLOPs** 指除矩阵乘法之外的运算（softmax、mask、缩放等），这些操作在 GPU 上比 matmul 慢得多，v2 重新排布计算顺序压低了它们的占比。**TMA**（Tensor Memory Accelerator，张量内存加速器）是 H100 引入的硬件单元，用异步搬运代替 SM 的同步 load/store；**FP8**（8 位浮点数）是 Hopper 架构的新数值类型，配合 **FP8 Tensor Core**（专门做低精度矩阵乘的硬件单元）能再翻一倍吞吐。
 
 FlashAttention 2 的关键优化：v1 在 batch 和 head 两个维度并行，v2 额外在 sequence length 维度并行，GPU 利用率从 v1 的 ~50% 提升到 ~70%。
 
@@ -92,7 +92,7 @@ import torch.nn.functional as F
 output = F.scaled_dot_product_attention(query, key, value)
 ```
 
-vLLM（高吞吐推理引擎，第 5 章已介绍）、**HuggingFace Transformers**（HuggingFace 出品的模型加载与训练库，几乎是 Python 端跑预训练模型的事实标准）等框架内部已经全面使用 FlashAttention。你要做的只是确保 PyTorch 版本 ≥ 2.0，GPU 支持（A100/H100/RTX 3090+）。
+vLLM（高吞吐推理引擎）、**HuggingFace Transformers**（HuggingFace 出品的模型加载与训练库，几乎是 Python 端跑预训练模型的事实标准）等框架内部已经全面使用 FlashAttention。你要做的只是确保 PyTorch 版本 ≥ 2.0，GPU 支持（A100/H100/RTX 3090+）。
 
 实际效果（A100, Llama 2 7B, batch=1）：
 
@@ -112,7 +112,7 @@ vLLM（高吞吐推理引擎，第 5 章已介绍）、**HuggingFace Transformer
 
 ### Decode 的瓶颈
 
-第 2 章讲过，Decode 阶段是 **memory-bound**（内存带宽受限，瓶颈在显存读取速度而不是算力，第 3 章已介绍）：每生成一个 token，GPU 要从显存读取整个模型的权重（7B 模型 = 14 GB @ **FP16**，半精度浮点数），但实际计算量很小（只处理 1 个 token）。GPU 的算力大量闲置，利用率可能不到 10%。
+Decode 阶段是 **memory-bound**（内存带宽受限，瓶颈在显存读取速度而不是算力）：每生成一个 token，GPU 要从显存读取整个模型的权重（7B 模型 = 14 GB @ **FP16**，半精度浮点数），但实际计算量很小（只处理 1 个 token）。GPU 的算力大量闲置，利用率可能不到 10%。
 
 换个角度看：大模型生成 1 个 token 要 30ms，小模型可能只要 5ms。但两者大部分时间都在等显存读取，真正算的时间差别没那么大。
 
@@ -142,7 +142,7 @@ Target model (Qwen2-7B):
 
 注意被拒绝的位置不是"白跑一趟"——target 模型在这次 **forward**（前向传播，一次模型从输入到输出的完整计算）里同时算出了每个位置的正确预测，第一个被拒绝的草稿 token 会用 target 自己的预测覆盖，所以这一步保底也能拿到 1 个新 token。
 
-为什么验证 5 个 token 和验证 1 个差不多快？因为这 5 个 token 可以像 Prefill（预填充阶段，第 4 章已介绍）一样并行计算——而 Prefill 是 **compute-bound**（算力受限，瓶颈在 GPU 算力而不是显存带宽，第 3 章已介绍），算 5 个和算 1 个的时间差异很小（GPU 算力有富余）。
+为什么验证 5 个 token 和验证 1 个差不多快？因为这 5 个 token 可以像 Prefill（预填充阶段）一样并行计算——而 Prefill 是 **compute-bound**（算力受限，瓶颈在 GPU 算力而不是显存带宽），算 5 个和算 1 个的时间差异很小（GPU 算力有富余）。
 
 ### 加速比取决于接受率
 
@@ -194,11 +194,11 @@ python -m vllm.entrypoints.openai.api_server \
 
 ## 8.3 KV Cache 压缩与管理
 
-第 2 章计算过，Llama 2 7B 在 seq_len=4096、batch=32 时，**KV Cache**（Key-Value Cache，把 Attention 中过去 token 的 key/value 张量缓存下来避免重复计算，第 1、2 章已介绍）就要 64 GB 显存。KV Cache 管理是推理引擎的核心问题之一。
+Llama 2 7B 在 seq_len=4096、batch=32 时，**KV Cache**（Key-Value Cache，把 Attention 中过去 token 的 key/value 张量缓存下来避免重复计算）就要 64 GB 显存。KV Cache 管理是推理引擎的核心问题之一。
 
 ### 量化 KV Cache
 
-最直接的方案：把 KV Cache 从 FP16 量化到 FP8 或 **INT8**（8 位整数，第 7 章已介绍）。
+最直接的方案：把 KV Cache 从 FP16 量化到 FP8 或 **INT8**（8 位整数）。
 
 ```
 FP16 KV Cache: 每个元素 2 bytes
@@ -284,7 +284,7 @@ python -m vllm.entrypoints.openai.api_server \
     --enable-prefix-caching
 ```
 
-效果取决于 prefix 长度和请求量（**QPS**：Queries Per Second，每秒请求数，第 1 章已介绍）：
+效果取决于 prefix 长度和请求量（**QPS**：Queries Per Second，每秒请求数）：
 
 | System Prompt 长度 | 每请求节省的 Prefill | 100 QPS 下节省的 GPU 算力 |
 |-------------------|--------------------|-----------------------|
@@ -292,7 +292,7 @@ python -m vllm.entrypoints.openai.api_server \
 | 2000 tokens | ~100 ms | ~10 秒/秒的 GPU 时间 |
 | 5000 tokens | ~250 ms | ~25 秒/秒的 GPU 时间 |
 
-Agent 场景下 system prompt 往往包含大量 **tool description**（工具描述，告诉模型每个可用工具的名字、参数、用法的 JSON Schema 文本），轻松超过 2000 tokens。APC 可以把 **TTFT**（Time To First Token，首 token 延迟，第 4 章已介绍）从 200ms 降到 20ms（只需要 Prefill 用户的短 query）。
+Agent 场景下 system prompt 往往包含大量 **tool description**（工具描述，告诉模型每个可用工具的名字、参数、用法的 JSON Schema 文本），轻松超过 2000 tokens。APC 可以把 **TTFT**（Time To First Token，首 token 延迟）从 200ms 降到 20ms（只需要 Prefill 用户的短 query）。
 
 Anthropic 和 OpenAI 的 API 也提供了 **Prompt Caching**（提示词缓存，云厂商在 API 层提供的前缀复用机制）功能，原理类似。Anthropic 的 Prompt Caching 对缓存命中的 input token 打 9 折（只收 10% 的价格），这对大量调用同一 system prompt 的 Agent 来说省很多钱。
 
@@ -385,7 +385,7 @@ response = client.chat.completions.create(
 )
 ```
 
-**SGLang 的约束解码**（SGLang 是另一款高性能推理引擎，靠 RadixAttention 做前缀树式 KV 复用，第 1、6 章已介绍） — 性能最好。SGLang 优化了 FSM 的编译和执行：**batch**（批，把多个请求拼到一起一次性推理）内共享 FSM 状态，减少重复计算。在需要大量 JSON 输出的 Agent 场景中，SGLang 的 constrained decoding 比 vLLM 快 2-3x。
+**SGLang 的约束解码**（SGLang 是另一款高性能推理引擎，靠 RadixAttention 做前缀树式 KV 复用） — 性能最好。SGLang 优化了 FSM 的编译和执行：**batch**（批，把多个请求拼到一起一次性推理）内共享 FSM 状态，减少重复计算。在需要大量 JSON 输出的 Agent 场景中，SGLang 的 constrained decoding 比 vLLM 快 2-3x。
 
 ### 选型建议
 
@@ -408,9 +408,9 @@ response = client.chat.completions.create(
 
 讨论加速效果前先把指标统一下，后面章节也会反复用到：
 
-- **TTFT（Time to First Token，首 token 延迟，第 4 章已介绍）**：从客户端发请求到收到第一个 token 的时间，等于 prefill 耗时 + 调度排队。决定用户感知的"响应速度"
+- **TTFT（Time to First Token，首 token 延迟）**：从客户端发请求到收到第一个 token 的时间，等于 prefill 耗时 + 调度排队。决定用户感知的"响应速度"
 - **TPOT（Time Per Output Token，每输出 token 时间）**：稳态 decode 阶段每个输出 token 的生成时间，决定流式输出"跟手不跟手"
-- **TPS（Tokens Per Second，每秒 token 数，第 4 章已介绍）**：服务端整体每秒吐出的 token 数（所有并发请求加起来），决定服务器扛多少并发、单位 token 成本多少
+- **TPS（Tokens Per Second，每秒 token 数）**：服务端整体每秒吐出的 token 数（所有并发请求加起来），决定服务器扛多少并发、单位 token 成本多少
 
 三个指标常常此消彼长：调大 batch 提升 TPS，但 TPOT 会上升；开 **chunked prefill**（分块预填充，把超长 prompt 的 prefill 切成小块，穿插在 decode 步骤之间执行，避免单条长请求把后续请求堵死）改善长请求的 TTFT，但单请求峰值 TPS 略降。优化时先想清楚业务最敏感的是哪一个。
 
@@ -431,13 +431,13 @@ response = client.chat.completions.create(
 本章主线之外的两个工程优化，目前都已经默认集成进 vLLM，不需要单独开关，但出问题时排查日志会看到名字：
 
 - **CUDA Graph**（NVIDIA 提供的一种机制，把一连串 GPU **kernel**——也就是 GPU 上执行的并行计算函数——的调用录制成静态图，之后整图一次性提交）：decode 阶段每步的 kernel 调用序列是高度重复的，把这个序列录制成一张"图"以后直接重放，可以省掉每步 0.5-1ms 的 CPU→GPU 调度开销。对短输出场景（每个请求只生成几十个 token）效果尤其明显。vLLM 默认开启，遇到动态 **shape**（张量的维度形状）的边角情况会自动回退到 **eager**（PyTorch 默认的逐行解释执行模式，与图模式相对）
-- **FlashInfer**：[FlashInfer](https://github.com/flashinfer-ai/flashinfer) 是专门为 LLM decode 阶段优化的 **attention kernel**（实现 Attention 的底层 GPU 函数）库，相比 FlashAttention 在 **paged KV**（参考 PagedAttention 的分页 KV Cache）+ 长上下文 + 大 batch 的 decode 场景下更快，对 **GQA**（Grouped-Query Attention，分组查询注意力，多个 Q 头共享一组 K/V 头来省 KV Cache 显存，第 2 章已介绍）支持得更好。vLLM v0.6+ 已经把它作为默认后端
+- **FlashInfer**：[FlashInfer](https://github.com/flashinfer-ai/flashinfer) 是专门为 LLM decode 阶段优化的 **attention kernel**（实现 Attention 的底层 GPU 函数）库，相比 FlashAttention 在 **paged KV**（参考 PagedAttention 的分页 KV Cache）+ 长上下文 + 大 batch 的 decode 场景下更快，对 **GQA**（Grouped-Query Attention，分组查询注意力，多个 Q 头共享一组 K/V 头来省 KV Cache 显存）支持得更好。vLLM v0.6+ 已经把它作为默认后端
 
 另外一个 Agent 工程师常碰到的话题是 **LoRA serving**（**LoRA**：Low-Rank Adaptation，低秩适配，一种只训练几个小矩阵就能微调大模型的技术；LoRA serving 指在线服务时多个 LoRA 适配器共享同一 base 模型）——同一个 base model 配合多个 LoRA 适配器在线动态切换。vLLM 通过 `--enable-lora --max-loras N` 支持这种用法，多个 **adapter**（适配器，LoRA 训练出来的小权重补丁）共享同一份 base 权重，每个请求按 `model` 字段路由到对应适配器。具体训练侧的工作流见第 9 章。
 
-本章没单独展开但要混个脸熟的几个名字（后续章节会用到）：**Continuous Batching**（连续批处理，每生成一个 token 就重新组 batch，让长短请求高效共存，第 1 章已介绍）、**Tensor Parallel**（**TP**，张量并行，把单层权重切分到多卡上协同计算，第 1 章已介绍，第 11 章详细讲）、**Pipeline Parallel**（**PP**，流水线并行，把模型按层切分到多卡，第 11 章详讲）、**Data Parallel**（**DP**，数据并行，每张卡放完整模型、数据切分到不同卡）、**Expert Parallel**（**EP**，专家并行，**MoE**——Mixture of Experts，混合专家模型——的专家网络切分到不同卡）、**Tree Attention**（树形注意力，配合 Medusa/EAGLE 这类多分支推测使用的 attention 变体）。这些是分布式/并行/大模型架构层面的技术，第 11、12 章会专门讲。
+本章没单独展开但要混个脸熟的几个名字：**Continuous Batching**（连续批处理，每生成一个 token 就重新组 batch，让长短请求高效共存）、**Tensor Parallel**（**TP**，张量并行，把单层权重切分到多卡上协同计算）、**Pipeline Parallel**（**PP**，流水线并行，把模型按层切分到多卡）、**Data Parallel**（**DP**，数据并行，每张卡放完整模型、数据切分到不同卡）、**Expert Parallel**（**EP**，专家并行，**MoE**——Mixture of Experts，混合专家模型——的专家网络切分到不同卡）、**Tree Attention**（树形注意力，配合 Medusa/EAGLE 这类多分支推测使用的 attention 变体）。这些是分布式/并行/大模型架构层面的技术。
 
-还有几个常见的底层库名字，写 CUDA kernel 时绕不开：**Triton**（OpenAI 出的 Python 写 GPU kernel 的 DSL，写起来像 NumPy 但能生成接近 CUDA 性能的 GPU 代码，注意和 NVIDIA Triton Inference Server 同名不同物）、**CUTLASS**（NVIDIA 官方的 C++ 模板库，用来高性能实现 **GEMM**——General Matrix Multiplication，通用矩阵乘法，第 2 章已介绍——和卷积）、**cuBLAS**（NVIDIA 闭源的基础线性代数库，PyTorch 的矩阵乘默认走它）、**xFormers**（Meta 开源的优化 transformer 算子集合，早期 FlashAttention 普及前的事实标准）、**FasterTransformer**（NVIDIA 早期开源的 transformer 推理加速库，已被 **TensorRT-LLM**——NVIDIA 当前主推的 LLM 推理引擎，第 1、6 章已介绍——取代）。这些库的源码风格、组合方式见第 11 章和附录。
+还有几个常见的底层库名字，写 CUDA kernel 时绕不开：**Triton**（OpenAI 出的 Python 写 GPU kernel 的 DSL，写起来像 NumPy 但能生成接近 CUDA 性能的 GPU 代码，注意和 NVIDIA Triton Inference Server 同名不同物）、**CUTLASS**（NVIDIA 官方的 C++ 模板库，用来高性能实现 **GEMM**——General Matrix Multiplication，通用矩阵乘法——和卷积）、**cuBLAS**（NVIDIA 闭源的基础线性代数库，PyTorch 的矩阵乘默认走它）、**xFormers**（Meta 开源的优化 transformer 算子集合，早期 FlashAttention 普及前的事实标准）、**FasterTransformer**（NVIDIA 早期开源的 transformer 推理加速库，已被 **TensorRT-LLM**——NVIDIA 当前主推的 LLM 推理引擎——取代）。
 
 **延伸阅读：**
 

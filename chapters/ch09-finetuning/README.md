@@ -1,6 +1,6 @@
 # 第 9 章 微调：让通用模型变成领域专家
 
-> **本章操作只在 Linux GPU 服务器执行。** Mac 本地可以阅读概念部分，但所有代码示例都需要 NVIDIA GPU 环境（A10/A100/RTX 4090 任意一款均可，A10 是 24GB 推理卡、A100 是 40/80GB 数据中心卡、RTX 4090 是 24GB 消费级旗舰）。QLoRA（Quantized LoRA，量化版 LoRA，ch01 已介绍）部分单卡 24GB 显存够用，LoRA（Low-Rank Adaptation，低秩适配，ch01 已介绍）bf16（bfloat16，2 字节浮点，ch03 已介绍）至少 32GB，Full Fine-tuning（全参数微调，所有模型参数都参与训练）需要多卡。
+> **本章操作只在 Linux GPU 服务器执行。** Mac 本地可以阅读概念部分，但所有代码示例都需要 NVIDIA GPU 环境（A10/A100/RTX 4090 任意一款均可，A10 是 24GB 推理卡、A100 是 40/80GB 数据中心卡、RTX 4090 是 24GB 消费级旗舰）。QLoRA（Quantized LoRA，量化版 LoRA）部分单卡 24GB 显存够用，LoRA（Low-Rank Adaptation，低秩适配）bf16（bfloat16，2 字节浮点）至少 32GB，Full Fine-tuning（全参数微调，所有模型参数都参与训练）需要多卡。
 
 你手上有个 7B 的通用大模型，它什么都会一点，但在你的业务场景——比如法律合同审查、医疗问诊、代码 Review——上表现平平。怎么办？
 
@@ -41,14 +41,14 @@
 
 ### PEFT：只训练极少量参数
 
-PEFT（Parameter-Efficient Fine-Tuning，参数高效微调，ch01 已介绍）的核心思想很简单：冻结原始模型的绝大部分参数，只训练新增的少量参数。
+PEFT（Parameter-Efficient Fine-Tuning，参数高效微调）的核心思想很简单：冻结原始模型的绝大部分参数，只训练新增的少量参数。
 
 主流的 PEFT 方法包括：
 
 - **LoRA/QLoRA**：在冻结的权重矩阵旁边加低秩分解矩阵，最主流
 - **Prefix Tuning**（前缀微调）：在输入前加可训练的虚拟 token（virtual token，不对应真实词表的占位向量，只在训练时学习）
 - **Adapter**（适配器）：在 Transformer 层之间插入小型网络
-- **IA3**（Infused Adapter by Inhibiting and Amplifying Inner Activations）：用极少量参数缩放注意力（attention，ch02 已介绍）和前馈层（FFN，feed-forward network，ch02 已介绍）的激活值
+- **IA3**（Infused Adapter by Inhibiting and Amplifying Inner Activations）：用极少量参数缩放注意力（attention）和前馈层（FFN，feed-forward network）的激活值
 
 其中 LoRA 是目前绝对的主流，后面我们重点讲它。
 
@@ -125,11 +125,11 @@ target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
 
 ### QLoRA：量化 + LoRA
 
-QLoRA（Quantized LoRA）的核心创新是：把基础模型量化到 4-bit（每个权重只用 4 位存储，ch07 已介绍量化基础），然后在量化模型上做 LoRA。
+QLoRA（Quantized LoRA）的核心创新是：把基础模型量化到 4-bit（每个权重只用 4 位存储），然后在量化模型上做 LoRA。
 
 具体来说：
 
-1. 用 NF4（NormalFloat 4-bit，针对正态分布权重设计的 4 位浮点格式，ch07 已介绍）量化基础模型，显存从 15GB 降到 ~4GB
+1. 用 NF4（NormalFloat 4-bit，针对正态分布权重设计的 4 位浮点格式）量化基础模型，显存从 15GB 降到 ~4GB
 2. LoRA 的 adapter（适配器，挂在原模型旁边的小型可训练矩阵）矩阵保持 bf16 精度
 3. 计算时，量化权重反量化（dequantize，把低位权重还原回高精度浮点）到 bf16 做矩阵乘法（matmul，神经网络的核心运算）
 4. 梯度只更新 LoRA 参数（bf16）
@@ -242,7 +242,7 @@ data = [d for d in data if len(d["output"]) > 50]
 
 ### SFT 的训练目标：next-token prediction
 
-在看代码之前先把训练目标说清楚。SFT（Supervised Fine-Tuning，监督微调，用「输入-期望输出」成对样本训练，ch01 已介绍）的损失函数（loss function，衡量预测与真实标签差距的函数，训练目标就是把它降到最小）是 **next-token prediction（下一个 token 预测，自回归语言模型的基本训练目标）的交叉熵损失**（cross-entropy loss，分类任务最常用的损失函数，衡量预测概率分布和真实分布的差距）：给定 prompt（提示词，模型的输入部分）+response（响应，模型要生成的部分）拼成的完整序列，模型一个 token（最小词元，ch02 已介绍）一个 token 地预测下一个 token 的概率分布，损失定义为 $-\log P(\text{真实 token})$，对序列里所有 token 求和取平均。
+在看代码之前先把训练目标说清楚。SFT（Supervised Fine-Tuning，监督微调，用「输入-期望输出」成对样本训练）的损失函数（loss function，衡量预测与真实标签差距的函数，训练目标就是把它降到最小）是 **next-token prediction（下一个 token 预测，自回归语言模型的基本训练目标）的交叉熵损失**（cross-entropy loss，分类任务最常用的损失函数，衡量预测概率分布和真实分布的差距）：给定 prompt（提示词，模型的输入部分）+response（响应，模型要生成的部分）拼成的完整序列，模型一个 token（最小词元）一个 token 地预测下一个 token 的概率分布，损失定义为 $-\log P(\text{真实 token})$，对序列里所有 token 求和取平均。
 
 关键细节：**prompt 部分的 token 不计入 loss**，只有 response 部分计梯度。这通过 `labels` 张量（tensor，PyTorch 里的多维数组，类比 JS 里的嵌套数组但支持 GPU 加速）里把 prompt 位置设成 `-100`（PyTorch（Meta 开源的深度学习框架，本书训练侧的默认框架）交叉熵的 ignore_index，约定值为 -100 的位置不参与损失计算）来实现。如果不做这个 mask（掩码，把某些位置标记为"不参与计算"），模型会去拟合用户的输入，这显然不是我们想要的——我们要的是"看到 prompt 生成 response"，不是"看到 prompt 生成另一个 prompt"。
 
@@ -345,7 +345,7 @@ gradient_checkpointing: true
 llamafactory-cli train config.yaml
 ```
 
-LLaMA-Factory 支持 100+ 模型、LoRA/QLoRA/Full FT、SFT/DPO（Direct Preference Optimization，直接偏好优化，无需训练奖励模型的偏好对齐方法，ch01 已介绍）/PPO（Proximal Policy Optimization，近端策略优化，RLHF 经典的强化学习算法，ch10 会详讲）/ORPO（Odds Ratio Preference Optimization，比值比偏好优化，SFT 和偏好对齐一步完成）等多种训练方式，还内置了 Web UI。对于大多数微调任务，推荐直接用它。
+LLaMA-Factory 支持 100+ 模型、LoRA/QLoRA/Full FT、SFT/DPO（Direct Preference Optimization，直接偏好优化，无需训练奖励模型的偏好对齐方法）/PPO（Proximal Policy Optimization，近端策略优化，RLHF 经典的强化学习算法）/ORPO（Odds Ratio Preference Optimization，比值比偏好优化，SFT 和偏好对齐一步完成）等多种训练方式，还内置了 Web UI。对于大多数微调任务，推荐直接用它。
 
 ### Unsloth
 
@@ -422,7 +422,7 @@ lora_config = LoraConfig(
 
 ### Step 3：合并 LoRA 权重
 
-训练完成后，LoRA adapter 是单独保存的（通常只有几十 MB）。如果要用 vLLM（高吞吐 LLM 推理引擎，ch01/ch05 已介绍）部署，需要先把 adapter 合并回基础模型：
+训练完成后，LoRA adapter 是单独保存的（通常只有几十 MB）。如果要用 vLLM（高吞吐 LLM 推理引擎）部署，需要先把 adapter 合并回基础模型：
 
 ```python
 from peft import PeftModel    # PeftModel：peft 库里把基础模型 + adapter 合并管理的类
@@ -451,7 +451,7 @@ merged_model.save_pretrained("./output/qwen2-7b-merged")
 
 ```bash
 vllm serve ./output/qwen2-7b-merged \
-    --tensor-parallel-size 1 \   # Tensor Parallel（张量并行，跨多卡切分单层矩阵，ch03 已介绍）的卡数
+    --tensor-parallel-size 1 \   # Tensor Parallel（张量并行，跨多卡切分单层矩阵）的卡数
     --max-model-len 4096 \
     --port 8000
 ```

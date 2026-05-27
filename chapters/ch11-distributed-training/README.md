@@ -2,7 +2,7 @@
 
 > **进阶章节。** 如果你的目标是推理部署和微调（QLoRA 单卡即可），可以先跳过本章。当你需要从零预训练模型或在多卡上做 Full Fine-tuning（全参数微调，参见第 9 章）时再回来。
 
-> **本章所有代码示例只在 Linux GPU 服务器（多卡环境）执行。** 单机多卡（4-8 张 GPU）即可跑通 DDP（Distributed Data Parallel，分布式数据并行）、ZeRO（Zero Redundancy Optimizer，零冗余优化器，第 1 章已介绍）、FSDP（Fully Sharded Data Parallel，完全分片数据并行，第 9 章已介绍）示例；Pipeline Parallelism（流水线并行）和真正的 3D parallelism（三维并行，DP+TP+PP 的组合）需要多台机器组成的集群。Mac 本地可以阅读概念部分，但任何代码片段都跑不起来。
+> **本章所有代码示例只在 Linux GPU 服务器（多卡环境）执行。** 单机多卡（4-8 张 GPU）即可跑通 DDP（Distributed Data Parallel，分布式数据并行）、ZeRO（Zero Redundancy Optimizer，零冗余优化器）、FSDP（Fully Sharded Data Parallel，完全分片数据并行）示例；Pipeline Parallelism（流水线并行）和真正的 3D parallelism（三维并行，DP+TP+PP 的组合）需要多台机器组成的集群。Mac 本地可以阅读概念部分，但任何代码片段都跑不起来。
 
 前两章我们在单卡上搞定了微调和对齐。但现实中，单卡很快就不够用了：
 
@@ -28,7 +28,7 @@
 
 ### 最简单的分布式策略
 
-数据并行（Data Parallelism, DP，第 1 章已介绍：每张卡持有完整模型副本，各处理一部分数据）的思路最直观：
+数据并行（Data Parallelism, DP：每张卡持有完整模型副本，各处理一部分数据）的思路最直观：
 
 1. 每张卡上放一份完整的模型副本
 2. 一个 batch（一次梯度更新使用的样本批次）的数据切成 N 份，每张卡处理一份
@@ -57,8 +57,8 @@
 
 - 梯度大小：7B × 2 bytes = 14 GB
 - 在 ring all-reduce 中，每张卡需要发送和接收约 $2 \times \frac{N-1}{N} \times 14$ GB 的数据
-- 8 卡通过 NVLink（NVIDIA 自家的 GPU 间高速互联，第 3 章已介绍，单机内做 GPU-GPU 直连用）（900 GB/s 双向带宽）：通信时间约 **0.05 秒**
-- 8 卡通过 PCIe（PCI Express，第 3 章已介绍，连 GPU、网卡的通用总线）Gen4（64 GB/s 双向带宽）：通信时间约 **0.8 秒**
+- 8 卡通过 NVLink（NVIDIA 自家的 GPU 间高速互联，单机内做 GPU-GPU 直连用）（900 GB/s 双向带宽）：通信时间约 **0.05 秒**
+- 8 卡通过 PCIe（PCI Express，连 GPU、网卡的通用总线）Gen4（64 GB/s 双向带宽）：通信时间约 **0.8 秒**
 
 如果一个训练 step（一次完整的前向+反向+参数更新）的计算时间是 2 秒，那 NVLink 下通信开销可以忽略（2.5%），但 PCIe 下就有 30%+ 的开销了。这就是为什么训练集群都用 NVLink。
 
@@ -111,7 +111,7 @@ DDP 的优点是简单、通信效率高（梯度计算和通信可以 overlap�
 
 ### Tensor Parallelism（张量并行）
 
-Tensor Parallelism（TP，张量并行，第 1 章和第 5 章已介绍：把单个层内部的大矩阵按行或列切到多张卡上）把一个层的矩阵切分到多张卡上。
+Tensor Parallelism（TP，张量并行：把单个层内部的大矩阵按行或列切到多张卡上）把一个层的矩阵切分到多张卡上。
 
 以一个线性层 $Y = XW$ 为例，$W \in \mathbb{R}^{d \times d}$：
 
@@ -131,7 +131,7 @@ Tensor Parallelism 在推理时（vLLM 的 `--tensor-parallel-size`）比训练�
 
 ### Pipeline Parallelism（流水线并行）
 
-Pipeline Parallelism（PP，流水线并行，第 1 章和第 5 章已介绍：按层切分模型，每张卡放一段连续的层，像工厂流水线那样让样本依次穿过各段）把模型的不同层放到不同卡上：
+Pipeline Parallelism（PP，流水线并行：按层切分模型，每张卡放一段连续的层，像工厂流水线那样让样本依次穿过各段）把模型的不同层放到不同卡上：
 
 - GPU 0：Layer 0-7
 - GPU 1：Layer 8-15
@@ -181,7 +181,7 @@ GPU 3:             [F1][F2][F3][F4][B4][B3][B2][B1]
 
 ### DeepSpeed 的核心贡献
 
-微软的 [DeepSpeed](https://github.com/microsoft/DeepSpeed)（微软开源的大模型训练/推理框架，第 9 章在微调里已用过）（[文档](https://deepspeed.readthedocs.io/)）提出了 ZeRO（Zero Redundancy Optimizer，零冗余优化器，第 1 章已介绍，[arxiv 1910.02054](https://arxiv.org/abs/1910.02054)），核心洞察是：
+微软的 [DeepSpeed](https://github.com/microsoft/DeepSpeed)（微软开源的大模型训练/推理框架）（[文档](https://deepspeed.readthedocs.io/)）提出了 ZeRO（Zero Redundancy Optimizer，零冗余优化器，[arxiv 1910.02054](https://arxiv.org/abs/1910.02054)），核心洞察是：
 
 > 在数据并行中，每张卡都保存完整的模型参数、梯度和优化器状态（optimizer state，优化器为每个参数额外维护的统计量，Adam 这类算法里包含一阶/二阶动量等，通常是参数大小的好几倍），这里有大量冗余。我们可以把这些状态分片（shard，按卡数切成若干份，每张卡只持有一份）到不同卡上。
 
@@ -246,7 +246,7 @@ Stage 越高分片越彻底，显存越省，但每个 step 需要的通信也�
 - 需要额外的 all-gather 来获取完整参数（forward 和 backward 前）
 - 通信量是 Stage 2 的约 1.5 倍
 - 计算效率有 10-20% 的损失
-- 适用场景：大模型 Full FT（Full Fine-tuning，全参数微调，第 9 章已介绍），或者显存非常紧张
+- 适用场景：大模型 Full FT（Full Fine-tuning，全参数微调），或者显存非常紧张
 
 实际建议：先试 Stage 2，不够再用 Stage 3。
 
@@ -368,7 +368,7 @@ fsdp_config:
 
 ### GPU 间通信技术
 
-**NVLink**：NVIDIA 的高速 GPU 互联（第 3 章已介绍）。
+**NVLink**：NVIDIA 的高速 GPU 互联。
 
 - NVLink 3.0（A100）：双向 600 GB/s
 - NVLink 4.0（H100）：双向 900 GB/s
@@ -379,7 +379,7 @@ fsdp_config:
 - A100 DGX（NVIDIA 官方 8 卡 A100 服务器型号）：8 GPU 通过 NVSwitch 全互联，任意两张卡 600 GB/s
 - H100 DGX：8 GPU 全互联，任意两张卡 900 GB/s
 
-**PCIe**：老牌通用接口（第 3 章已介绍）。
+**PCIe**：老牌通用接口。
 
 - PCIe Gen4 x16：双向 ~32 GB/s
 - PCIe Gen5 x16：双向 ~64 GB/s

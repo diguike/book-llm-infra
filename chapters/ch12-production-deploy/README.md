@@ -1,6 +1,6 @@
 # 第 12 章 LLM 服务的生产化部署
 
-把模型跑起来只是第一步。从 `python -m vllm.entrypoints.openai.api_server`（vLLM 第 1 章已介绍，是当下最主流的高性能推理引擎）到真正承载线上流量，中间隔着容器化、GPU 调度、模型版本管理、API Gateway（API 网关，统一入口负责鉴权/限流/路由，类比 Node 生态里的 Express 或 Fastify 网关层）等一系列工程问题。这一章把这些问题逐个拆解。
+把模型跑起来只是第一步。从 `python -m vllm.entrypoints.openai.api_server`（vLLM 是当下最主流的高性能推理引擎）到真正承载线上流量，中间隔着容器化、GPU 调度、模型版本管理、API Gateway（API 网关，统一入口负责鉴权/限流/路由，类比 Node 生态里的 Express 或 Fastify 网关层）等一系列工程问题。这一章把这些问题逐个拆解。
 
 ## 12.1 容器化部署
 
@@ -323,7 +323,7 @@ spec:
 
 1. **livenessProbe vs readinessProbe**（存活探针 vs 就绪探针，K8s 用来判断容器是否需要重启/是否能接流量的两类健康检查）：两个 probe 的语义不一样。readinessProbe 失败时 K8s 把 Pod 从 Service（K8s 里给一组 Pod 提供稳定虚拟 IP 和负载均衡的抽象）的 endpoints（端点列表，Service 背后实际可路由到的 Pod IP 集合）里摘掉（不再分配流量），但 Pod 本身不重启；livenessProbe 失败时 Pod 会被直接重启。LLM 服务的模型加载期间还不能接流量，但进程是健康的，所以两者都需要 `initialDelaySeconds: 120` 让模型加载完。periodSeconds 上 readiness 可以短一些（10s），更快感知"模型加载完了，可以接流量了"；liveness 可以长一些（30s），避免误杀正在做长推理的 Pod。Probe 详细配置见 K8s 官方文档：<https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/>
 2. **initialDelaySeconds: 120**：7B 模型加载到 GPU 大概需要 30-60 秒，72B 可能要 3-5 分钟。设太短会导致 Pod 被反复杀死
-3. **preStop + terminationGracePeriodSeconds**：滚动更新或缩容时，K8s 先发 SIGTERM（Unix 标准的"优雅终止"信号，进程收到后应自行清理并退出）。LLM 的 streaming（流式响应，边生成边推送给客户端，第 4 章已介绍 SSE）连接可能持续 30-60 秒，比普通 HTTP 请求长一个数量级。preStop 里 sleep 5 秒，给 Service 的 endpoints controller（K8s 内置控制器，根据 Pod 状态维护 Service 的 endpoints 列表）留时间把这个 Pod 摘出来再开始关闭进程；`terminationGracePeriodSeconds: 120` 让正在生成的 token 流有时间走完。少了这两个配置，滚动更新时用户会看到响应突然中断
+3. **preStop + terminationGracePeriodSeconds**：滚动更新或缩容时，K8s 先发 SIGTERM（Unix 标准的"优雅终止"信号，进程收到后应自行清理并退出）。LLM 的 streaming（流式响应，边生成边推送给客户端，底层走 SSE）连接可能持续 30-60 秒，比普通 HTTP 请求长一个数量级。preStop 里 sleep 5 秒，给 Service 的 endpoints controller（K8s 内置控制器，根据 Pod 状态维护 Service 的 endpoints 列表）留时间把这个 Pod 摘出来再开始关闭进程；`terminationGracePeriodSeconds: 120` 让正在生成的 token 流有时间走完。少了这两个配置，滚动更新时用户会看到响应突然中断
 4. **shm volume**：用 emptyDir（K8s 临时卷，Pod 生命周期内可用，删除时自动清空）+ Memory medium 来提供共享内存，替代 Docker 的 `--shm-size`
 5. **模型缓存用 hostPath 仅限示意**：hostPath（K8s 卷类型之一，把宿主机本地路径直接挂进 Pod）把模型目录绑死在节点本地磁盘上。一旦节点故障被驱逐，K8s 把 Pod 调度到另一台机器时，新节点上没有模型文件，Pod 会卡在 init 阶段或者反复重启。多副本之间也无法共享同一份缓存。生产环境应该用 PVC（PersistentVolumeClaim，K8s 的持久卷申领，按需绑定后端存储）+ NAS（Network Attached Storage，网络附加存储）/NFS（Network File System，Unix 经典的网络文件共享协议）（多 Pod 共享、节点无关），或者下一节 12.3 的 initContainer（初始化容器，在主容器启动前按顺序跑完的一次性容器，常用来下载资源或做迁移）+ OSS（Object Storage Service，阿里云对象存储服务，类似 AWS S3）方案（每个节点本地缓存一份，第一次启动时下载）
 
@@ -498,7 +498,7 @@ spec:
 
 LLM 服务不能裸露给客户端。API Gateway 需要处理：鉴权、限流、负载均衡、超时。
 
-API Gateway 跟具体语言无关，下面的代码用 Python（FastAPI（第 4 章已介绍的 Python 异步 Web 框架） + redis-py（Redis 的 Python 官方客户端）；Redis 是内存型 KV 数据库，常用作缓存和限流计数器）举例，是因为它跟 vLLM 的生态贴得最近。如果主语言是 Node.js，用 Fastify（Node.js 生态的高性能 Web 框架） + ioredis（Node.js 上流行的 Redis 客户端）实现完全等价的逻辑就行，对应的限流可以用 `fastify-rate-limit` 之类的现成插件。不想自己写的话，社区也有几个现成的 LLM 网关可以直接部署：
+API Gateway 跟具体语言无关，下面的代码用 Python（FastAPI（Python 异步 Web 框架） + redis-py（Redis 的 Python 官方客户端）；Redis 是内存型 KV 数据库，常用作缓存和限流计数器）举例，是因为它跟 vLLM 的生态贴得最近。如果主语言是 Node.js，用 Fastify（Node.js 生态的高性能 Web 框架） + ioredis（Node.js 上流行的 Redis 客户端）实现完全等价的逻辑就行，对应的限流可以用 `fastify-rate-limit` 之类的现成插件。不想自己写的话，社区也有几个现成的 LLM 网关可以直接部署：
 
 - one-api（开源，多模型聚合）：<https://github.com/songquanpeng/one-api>
 - LiteLLM Proxy（开源 LLM 代理网关，统一多家模型 API；支持 100+ 模型）：<https://docs.litellm.ai/docs/simple_proxy>
@@ -591,7 +591,7 @@ timeout = aiohttp.ClientTimeout(
 )
 ```
 
-`sock_read` 超时是关键：它控制的是两个 SSE（Server-Sent Events，服务器主动推送的 HTTP 流，第 4 章已介绍）chunk 之间的最大间隔，而不是整个响应的时长。正常情况下 vLLM 每 10-50ms 就会发一个 token chunk，如果 30 秒都没收到下一个 chunk，说明后端出问题了。
+`sock_read` 超时是关键：它控制的是两个 SSE（Server-Sent Events，服务器主动推送的 HTTP 流）chunk 之间的最大间隔，而不是整个响应的时长。正常情况下 vLLM 每 10-50ms 就会发一个 token chunk，如果 30 秒都没收到下一个 chunk，说明后端出问题了。
 
 ## 12.5 多模型路由
 

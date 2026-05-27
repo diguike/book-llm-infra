@@ -21,7 +21,7 @@ flowchart LR
 
 涉及到的工具名字一次性交代清楚：
 
-- **Prometheus**：CNCF 毕业的开源时序数据库 + 监控系统，主动从目标端点拉取（pull）指标，ch12 已介绍过
+- **Prometheus**：CNCF 毕业的开源时序数据库 + 监控系统，主动从目标端点拉取（pull）指标
 - **Grafana**：开源可视化前端，把 Prometheus / Loki / Tempo 等多种数据源画成 Dashboard
 - **OpenTelemetry（OTel）**：CNCF 的可观测性标准协议和 SDK 集合，统一了 traces/metrics/logs 的采集格式，可以理解为「可观测性界的 HTTP」
 - **Tempo**：Grafana 出的分布式追踪后端，专门存 trace 数据，存储用对象存储（S3/OSS）成本低
@@ -32,13 +32,13 @@ flowchart LR
 
 ## 13.1 关键指标
 
-LLM 推理服务的指标体系跟传统 Web 服务有本质区别。传统服务关注 QPS（Queries Per Second，每秒请求数，ch01 已介绍）和 P99 延迟，LLM 服务需要更细粒度的指标。
+LLM 推理服务的指标体系跟传统 Web 服务有本质区别。传统服务关注 QPS（Queries Per Second，每秒请求数）和 P99 延迟，LLM 服务需要更细粒度的指标。
 
 ### TTFT — Time to First Token
 
-用户体感延迟的核心指标（ch04 已介绍）。从发出请求到收到第一个 token（模型处理的最小语义单元，可以是一个汉字、半个英文单词或一个标点）的时间。
+用户体感延迟的核心指标。从发出请求到收到第一个 token（模型处理的最小语义单元，可以是一个汉字、半个英文单词或一个标点）的时间。
 
-TTFT 主要由 prefill（预填充阶段，把整个 prompt 一次性塞进模型做并行前向计算，对应 ch04 讲的推理两阶段中的第一阶段）决定：模型需要先处理完所有 input tokens（输入 token 数，即 prompt 的 token 数量），才能开始生成。所以 TTFT 跟输入长度正相关：
+TTFT 主要由 prefill（预填充阶段，把整个 prompt 一次性塞进模型做并行前向计算）决定：模型需要先处理完所有 input tokens（输入 token 数，即 prompt 的 token 数量），才能开始生成。所以 TTFT 跟输入长度正相关：
 
 | 输入长度 | A10 (7B) TTFT | A100 (72B) TTFT |
 |----------|---------------|-----------------|
@@ -51,7 +51,7 @@ TTFT 主要由 prefill（预填充阶段，把整个 prompt 一次性塞进模�
 
 ### TPS — Tokens Per Second
 
-单个请求的 token 生成速度（ch04 已介绍）。人的阅读速度大约 5-8 tokens/s（中文 3-5 字/秒），所以 TPS 只要超过 15 tokens/s，用户体验就不会有明显瓶颈。
+单个请求的 token 生成速度。人的阅读速度大约 5-8 tokens/s（中文 3-5 字/秒），所以 TPS 只要超过 15 tokens/s，用户体验就不会有明显瓶颈。
 
 实际数据参考：
 
@@ -70,11 +70,11 @@ TPOT（每个输出 token 的平均生成耗时）是 TPS 的"硬币另一面"�
 - TPOT ≤ 100 ms（TPS ≥ 10）：可接受，偶尔感到「卡了一下」
 - TPOT > 200 ms（TPS < 5）：明显卡顿，前端最好加「思考中」动画掩盖
 
-vLLM（ch01/ch05 已介绍的工业级推理引擎）的 `vllm:time_per_output_token_seconds` Histogram（直方图，Prometheus 的一种 metric 类型，把观测值分桶统计，便于后续算分位数）暴露的就是这个分布。
+vLLM（工业级推理引擎）的 `vllm:time_per_output_token_seconds` Histogram（直方图，Prometheus 的一种 metric 类型，把观测值分桶统计，便于后续算分位数）暴露的就是这个分布。
 
 ### Throughput — 系统级吞吐
 
-跟 TPS 不同，throughput（吞吐量，单位时间内系统处理的总工作量）衡量的是整个系统每秒处理的总 token 数。vLLM 的 continuous batching（连续批处理，把多个请求在每个 decode step 动态拼成一个 batch 一起跑，ch05 详细讲过）会把多个请求打包在一起处理，所以系统 throughput 远高于单请求 TPS。
+跟 TPS 不同，throughput（吞吐量，单位时间内系统处理的总工作量）衡量的是整个系统每秒处理的总 token 数。vLLM 的 continuous batching（连续批处理，把多个请求在每个 decode step 动态拼成一个 batch 一起跑）会把多个请求打包在一起处理，所以系统 throughput 远高于单请求 TPS。
 
 ```
 系统 throughput = 并发请求数 × 单请求 TPS
@@ -119,7 +119,7 @@ scrape_configs:
       - targets: ['vllm-server:8000']
 ```
 
-K8s（Kubernetes，容器编排平台，ch12 已介绍）环境里这种 `static_configs` 不能用：Pod（K8s 中最小的部署单元，包含一个或多个容器）IP 随重启变化，Pod 数量也会随 HPA（Horizontal Pod Autoscaler，水平 Pod 自动伸缩器，本章 13.5 会详细讲）变化。两种正确做法：
+K8s（Kubernetes，容器编排平台）环境里这种 `static_configs` 不能用：Pod（K8s 中最小的部署单元，包含一个或多个容器）IP 随重启变化，Pod 数量也会随 HPA（Horizontal Pod Autoscaler，水平 Pod 自动伸缩器）变化。两种正确做法：
 
 **1）Prometheus 自带的 Kubernetes 服务发现**
 

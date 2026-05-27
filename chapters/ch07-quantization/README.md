@@ -23,13 +23,13 @@
 | INT8 | 8 bit | 1 byte | -128 ~ 127 | 量化推理 |
 | INT4 | 4 bit | 0.5 bytes | -8 ~ 7 | 激进量化推理 |
 
-**BF16（Brain Floating Point 16-bit，Google Brain 提出的 16 位浮点格式，ch03 已介绍）vs FP16（IEEE 754 半精度浮点）的区别**：FP16 有 10 位尾数、5 位指数，精度高但容易溢出（范围只到 6.5 万）。BF16 有 8 位指数、7 位尾数，范围和 FP32（IEEE 754 单精度浮点，32 位）一样大，但精度低一些。大模型训练普遍用 BF16，因为训练过程中梯度的动态范围很大，溢出比精度损失更致命。
+**BF16（Brain Floating Point 16-bit，Google Brain 提出的 16 位浮点格式）vs FP16（IEEE 754 半精度浮点）的区别**：FP16 有 10 位尾数、5 位指数，精度高但容易溢出（范围只到 6.5 万）。BF16 有 8 位指数、7 位尾数，范围和 FP32（IEEE 754 单精度浮点，32 位）一样大，但精度低一些。大模型训练普遍用 BF16，因为训练过程中梯度的动态范围很大，溢出比精度损失更致命。
 
 ### 一个 7B 模型在不同精度下的显存占用
 
 拿 Qwen2.5-7B（阿里通义千问开源的 70 亿参数大模型，2024 年 9 月发布）举例，它有大约 72 亿个参数：
 
-| 精度 | 参数存储 | 实际推理显存（含 KV Cache（Key-Value Cache，自回归推理时缓存历史 token 的注意力 K/V 张量，ch05 已介绍）等开销） | 推理速度（tokens/s, A100（NVIDIA Ampere 架构旗舰数据中心 GPU，40GB/80GB 显存）） |
+| 精度 | 参数存储 | 实际推理显存（含 KV Cache（Key-Value Cache，自回归推理时缓存历史 token 的注意力 K/V 张量）等开销） | 推理速度（tokens/s, A100（NVIDIA Ampere 架构旗舰数据中心 GPU，40GB/80GB 显存）） |
 |------|---------|--------------------------------|--------------------------|
 | FP32 | 28 GB | ~32 GB | 基线 |
 | FP16/BF16 | 14 GB | ~18 GB | ~40 tokens/s |
@@ -59,7 +59,7 @@
 
 ### Post-Training Quantization (PTQ)
 
-PTQ（Post-Training Quantization，训练后量化，ch01 已介绍——不需要回到训练阶段，加载已训练好的模型直接量化）在模型训练完之后做量化。你不需要原始训练数据，也不需要重新训练，只需要一小批校准数据（通常几百条文本就够了）来统计权重的分布。
+PTQ（Post-Training Quantization，训练后量化——不需要回到训练阶段，加载已训练好的模型直接量化）在模型训练完之后做量化。你不需要原始训练数据，也不需要重新训练，只需要一小批校准数据（通常几百条文本就够了）来统计权重的分布。
 
 **工作流程**：
 1. 加载训练好的 FP16 模型
@@ -199,11 +199,11 @@ GGUF 的量化类型看起来很复杂（Q4_K_M、Q5_K_S 之类），其实有�
 - 本地部署、边缘设备
 - 没有 GPU 或 GPU 显存不够的情况
 - 开发者自己电脑上快速跑模型做实验
-- macOS 上利用 Metal 加速（前文已介绍过 Metal）
+- macOS 上利用 Metal 加速
 
 ### FP8：Hopper 架构上的硬件原生格式
 
-FP8（8-bit Floating Point，8 位浮点，ch03 已介绍过格式定义）不是软件做的近似量化，而是 H100/H200（NVIDIA Hopper 架构的两代旗舰 GPU）和后续 Blackwell（NVIDIA 2024 年发布的下一代架构，代表卡是 B200/B100）架构在硬件 Tensor Core（NVIDIA GPU 内部专门做矩阵乘加的单元，ch03 已介绍）一级直接支持的 8-bit 浮点格式。两种常见变体：E4M3（4 位指数 + 3 位尾数，精度优先）和 E5M2（5 位指数 + 2 位尾数，范围优先），主流推理引擎多用 E4M3 存权重。
+FP8（8-bit Floating Point，8 位浮点）不是软件做的近似量化，而是 H100/H200（NVIDIA Hopper 架构的两代旗舰 GPU）和后续 Blackwell（NVIDIA 2024 年发布的下一代架构，代表卡是 B200/B100）架构在硬件 Tensor Core（NVIDIA GPU 内部专门做矩阵乘加的单元）一级直接支持的 8-bit 浮点格式。两种常见变体：E4M3（4 位指数 + 3 位尾数，精度优先）和 E5M2（5 位指数 + 2 位尾数，范围优先），主流推理引擎多用 E4M3 存权重。
 
 相比 INT4：
 
@@ -226,7 +226,7 @@ vllm serve neuralmagic/Qwen2-7B-Instruct-FP8 \
 
 除了 GPTQ / AWQ / GGUF，下面这两个名字在量化相关的文档里也经常出现，简单交代下定位避免读者懵：
 
-- **bitsandbytes**（Tim Dettmers 开源的 8-bit / 4-bit 量化库，QLoRA 论文的官方实现配套库）：HuggingFace `transformers` 原生支持的"开箱即用"量化方案，`AutoModel.from_pretrained(..., load_in_4bit=True)` 一行启用，量化是**加载模型时即时做的**（NF4（NormalFloat 4-bit，QLoRA 论文设计的、按权重正态分布优化分桶的 4 位格式）/ FP4（普通的 4-bit 浮点，1 位符号 + 2/1 位指数尾数）），用来快速做实验、跑 PEFT（Parameter-Efficient Fine-Tuning，参数高效微调的总称）/ QLoRA（Quantized LoRA，把基模量化到 4-bit 再叠 LoRA 适配器训练，ch01 已介绍）训练。缺点是不会生成可单独保存的量化权重文件，分发不友好，推理也不如 AWQ kernel 快
+- **bitsandbytes**（Tim Dettmers 开源的 8-bit / 4-bit 量化库，QLoRA 论文的官方实现配套库）：HuggingFace `transformers` 原生支持的"开箱即用"量化方案，`AutoModel.from_pretrained(..., load_in_4bit=True)` 一行启用，量化是**加载模型时即时做的**（NF4（NormalFloat 4-bit，QLoRA 论文设计的、按权重正态分布优化分桶的 4 位格式）/ FP4（普通的 4-bit 浮点，1 位符号 + 2/1 位指数尾数）），用来快速做实验、跑 PEFT（Parameter-Efficient Fine-Tuning，参数高效微调的总称）/ QLoRA（Quantized LoRA，把基模量化到 4-bit 再叠 LoRA 适配器训练）训练。缺点是不会生成可单独保存的量化权重文件，分发不友好，推理也不如 AWQ kernel 快
 - **SmoothQuant**（MIT-Han Lab 2022 年提出的 INT8 量化技术）：针对 INT8 量化中"激活值有少量极端 outlier（离群值，远离主分布的极端大数值，量化时会撑爆量化范围）"的问题，量化前先把激活的尺度按 channel 转移到权重上，让两边都更好量。它已经被吸收进 `llm-compressor`，作为 INT8 路线（W8A8，Weight 8-bit + Activation 8-bit 的简写，表示权重和激活都量到 8-bit）的标准做法。Hopper 之前的卡跑 INT8 推理常用这个
 
 ### 方法对比
