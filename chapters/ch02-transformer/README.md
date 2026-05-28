@@ -129,6 +129,7 @@ Transformer（2017 年 Google 论文 *Attention Is All You Need* 提出的神经
 
 数据流图里出现的几个生词，先在这里给一个最小定义，下面几节会逐个展开：
 
+- **投影 / projection**：Transformer 论文和代码里高频出现的词，听上去抽象，实际就是**一次矩阵乘法 = 一个 `nn.Linear` 全连接层**。比如 `q_proj` 就是 $Q = xW_q$，把输入向量乘上权重矩阵 $W_q$ 得到 Query 向量。JS 工程师可以理解成 `q = matmul(x, W_q)`。「投影」一词来自线性代数（把向量从一个空间映射到另一个空间），但在深度学习里它实际就指一个 Linear 层，没有别的玄机。上面图里的 Q/K/V 投影、Output 投影，以及代码里的 `q_proj` / `k_proj` / `v_proj` / `o_proj` 和 FFN 的 `gate_proj` / `up_proj` / `down_proj`，都是这个意思。
 - **FFN**（Feed-Forward Network，前馈网络）：每个 Transformer Block 里的第二个子模块，由两层线性变换加一个激活函数（activation function，给神经网络引入非线性的小函数，例如 ReLU、GELU、SwiGLU）组成。Attention 负责 token 之间的关系，FFN 负责对每个 token 的特征做非线性变换，作用类似"特征过滤器"。
 - **Norm**（归一化层）：对每层输出向量做数值缩放，防止激活值在深层网络里爆炸或消失。LayerNorm（Layer Normalization，层归一化，沿单个样本的最后一维做"减均值除标准差"）是经典方案，**RMSNorm**（Root Mean Square Normalization，均方根归一化）是 Llama 系列用的简化版（只做 RMS 缩放，不减均值），速度更快。
 - **RoPE**（Rotary Position Embedding，旋转位置编码）：把位置信息编码成向量旋转角度，通过乘法施加到 Q、K 上（不作用于 V）。相比经典的"加法式"位置编码（例如原始 Transformer 论文的 sinusoidal PE，以及 ALiBi 这类相对位置偏置方案），RoPE 更容易外推到训练时没见过的长上下文，是 Llama、Qwen（阿里通义千问开源大模型系列）、DeepSeek（深度求索开源大模型系列）等现代模型的标配。
