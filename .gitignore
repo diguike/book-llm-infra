@@ -167,3 +167,38 @@ examples/*/*.sqlite*
 # 大文件归档
 *.tgz
 *.tar.gz
+
+# ============================================================
+# 例外：示例代码目录下的同名目录必须开源
+#
+# 上面的 scripts/ k8s/ deploy/ .claude/ **/data/ 等规则，本意是排除
+# 作者自己的飞书发布工具链和生产部署配置。但它们会连带命中「章节示例
+# 项目内部」的同名目录 —— 而对讲部署的章节，k8s manifest 就是正文；
+# 对讲 Skill 脚本的章节，scripts/ 就是正文。读者 clone 下来跑不通。
+#
+# 这里按路径把示例代码下的重新放行。新开源一本书时，如果书里的示例
+# 用了别的目录名，照着这一段补。
+#
+# 两个坑：
+# 1. git 无法「重新包含」一个已被排除目录里的文件，所以必须先放行
+#    目录本身（带尾斜杠的规则），不能只写文件级 !xxx/*.ts
+# 2. gitignore 后面的规则覆盖前面的，所以这一段必须放在文件末尾
+# ============================================================
+!**/examples/**/scripts/
+!**/examples/**/k8s/
+!**/examples/**/deploy/
+!**/examples/**/.claude/
+!**/skills/**/scripts/
+!**/skills/**/data/
+!**/templates/**/scripts/
+!**/cases/**/scripts/
+
+# templates/ 下的 review-* 是给读者用的评审模板，不是内部审稿报告
+!**/templates/review-*.md
+
+# 示例的种子数据要开源，但运行时生成的数据库不要
+# （放行 data/ 目录后，把库文件重新排除掉）
+!**/examples/**/data/
+**/examples/**/data/*.db
+**/examples/**/data/*.db-*
+**/examples/**/data/*.sqlite*
