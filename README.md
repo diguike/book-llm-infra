@@ -77,7 +77,7 @@ cd examples/ch02-transformer
 
 - Python 3.10+
 - PyTorch 2.0+
-- 部分章节需要 GPU（最低 RTX 3090 / 阿里云 ecs.gn7i / 腾讯云 GN10Xp）
+- 部分章节需要 GPU（最低 RTX 3090 / [阿里云](https://www.aliyun.com/minisite/goods?userCode=okjhlpr5) ecs.gn7i / [腾讯云](https://cloud.tencent.com/act/pro/featured-202607?from=30156&Is=sdk-topnav&cps_key=1d358d18a7a17b4a6df8d67a62fd3d3d) GN10Xp）
 - 各章节的 README 会标注具体硬件要求
 
 ## 在线阅读
